@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>G-code Review</title>
+    <link rel="stylesheet" href="/src/ui/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="drop-zone">
+        <p>Drag &amp; drop a .gcode file here, or click to choose one</p>
+        <input id="file-input" type="file" accept=".gcode,.gco,.g" />
+      </div>
+      <div id="viewer" hidden>
+        <canvas id="scene-canvas"></canvas>
+        <aside id="sidebar"></aside>
+        <div id="controls">
+          <button id="play-pause">Play</button>
+          <div id="scrub-mode" role="radiogroup" aria-label="Scrub by">
+            <label><input type="radio" name="scrub-mode" id="mode-layers" checked /> Layers</label>
+            <label><input type="radio" name="scrub-mode" id="mode-points" /> Points</label>
+          </div>
+          <input id="layer-scrubber" type="range" min="0" max="0" value="0" />
+          <span id="layer-label">Layer 0 / 0</span>
+          <label><input id="toggle-travel" type="checkbox" checked /> Show travel</label>
+          <label>
+            Color by
+            <select id="color-mode">
+              <option value="move-type">Move type</option>
+              <option value="speed">Speed</option>
+              <option value="layer">Layer</option>
+              <option value="feature">Feature type</option>
+            </select>
+          </label>
+          <button id="settings-toggle" aria-expanded="false" aria-controls="settings-panel">Settings</button>
+        </div>
+        <div id="settings-panel" hidden>
+          <label>
+            Render mode
+            <select id="render-mode">
+              <option value="lines">Lines</option>
+              <option value="tubes">Tubes</option>
+            </select>
+          </label>
+          <label>
+            Extrusion width
+            <input id="extrusion-width" type="range" min="0.1" max="1.2" step="0.05" value="0.4" />
+            <span id="extrusion-width-label">0.40 mm</span>
+          </label>
+          <label>
+            Machine
+            <select id="machine-select">
+              <option value="fit-to-model">Fit to model</option>
+            </select>
+          </label>
+          <label><input id="toggle-scale" type="checkbox" /> Show scale</label>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
