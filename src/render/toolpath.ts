@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Layer, Move } from '../parser';
 import { EXTRUSION_COLOR, TRAVEL_COLOR, featureToColor, layerToColor, speedToColor } from './colors';
+import { createTubeMesh, type TubeMesh } from './tubes';
 
 export type ColorMode = 'move-type' | 'speed' | 'layer' | 'feature';
 export type RenderMode = 'lines' | 'tubes';
@@ -8,7 +9,6 @@ export type RenderMode = 'lines' | 'tubes';
 export const DEFAULT_EXTRUSION_WIDTH = 0.4; // mm, matches a common 0.4mm nozzle
 export const MIN_EXTRUSION_WIDTH = 0.1;
 export const MAX_EXTRUSION_WIDTH = 1.2;
-const TUBE_RADIAL_SEGMENTS = 6;
 
 export interface LayerCount {
   extrusion: number;
@@ -26,6 +26,8 @@ export interface Toolpath {
   setColorMode(mode: ColorMode): void;
   setRenderMode(mode: RenderMode): void;
   setExtrusionWidth(width: number): void;
+  /** Number of leading moves currently revealed by the scrubber. */
+  getVisibleMoveCount(): number;
   dispose(): void;
 }
 
@@ -63,10 +65,6 @@ function resolveMoveColor(
  * Y-up. Map gcode (x, y, z) -> three (x, z, -y): a -90deg rotation about X
  * that keeps the scene right-handed.
  */
-function toSceneVec(x: number, y: number, z: number, out: THREE.Vector3): THREE.Vector3 {
-  return out.set(x, z, -y);
-}
-
 function writePosition(positions: Float32Array, offset: number, x: number, y: number, z: number): void {
   positions[offset] = x;
   positions[offset + 1] = z;
@@ -109,50 +107,6 @@ function applyLineColors(
     colors[o + 5] = color.b;
   }
   colorAttr.needsUpdate = true;
-}
-
-const UP_AXIS = new THREE.Vector3(0, 1, 0);
-
-/** Builds one oriented, scaled cylinder instance per move, standing in for a tube segment. */
-function buildTubeMesh(moves: Move[], radius: number): THREE.InstancedMesh {
-  const geometry = new THREE.CylinderGeometry(1, 1, 1, TUBE_RADIAL_SEGMENTS, 1, true);
-  const material = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.05 });
-  const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, moves.length));
-  mesh.count = moves.length;
-  updateTubeTransforms(mesh, moves, radius);
-  return mesh;
-}
-
-function updateTubeTransforms(mesh: THREE.InstancedMesh, moves: Move[], radius: number): void {
-  const start = new THREE.Vector3();
-  const end = new THREE.Vector3();
-  const direction = new THREE.Vector3();
-  const midpoint = new THREE.Vector3();
-  const quaternion = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const matrix = new THREE.Matrix4();
-
-  for (let i = 0; i < moves.length; i++) {
-    const m = moves[i];
-    toSceneVec(m.x0, m.y0, m.z0, start);
-    toSceneVec(m.x1, m.y1, m.z1, end);
-    direction.subVectors(end, start);
-    const length = direction.length();
-    midpoint.addVectors(start, end).multiplyScalar(0.5);
-
-    if (length < 1e-6) {
-      scale.set(0, 0, 0);
-      quaternion.identity();
-    } else {
-      direction.divideScalar(length);
-      quaternion.setFromUnitVectors(UP_AXIS, direction);
-      scale.set(radius, length, radius);
-    }
-
-    matrix.compose(midpoint, quaternion, scale);
-    mesh.setMatrixAt(i, matrix);
-  }
-  mesh.instanceMatrix.needsUpdate = true;
 }
 
 function applyTubeColors(
@@ -241,31 +195,34 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   travelLines.frustumCulled = false;
 
   let extrusionWidth = DEFAULT_EXTRUSION_WIDTH;
-  const extrusionTubes = buildTubeMesh(extrudeMoves, extrusionWidth / 2);
-  applyTubeColors(extrusionTubes, extrudeMoves, 'move-type', EXTRUSION_COLOR, extrudeCtx);
-  extrusionTubes.frustumCulled = false;
-  extrusionTubes.visible = false;
+  const extrusionTubes: TubeMesh = createTubeMesh(extrudeMoves, extrusionWidth / 2);
+  applyTubeColors(extrusionTubes.mesh, extrudeMoves, 'move-type', EXTRUSION_COLOR, extrudeCtx);
+  extrusionTubes.mesh.frustumCulled = false;
+  extrusionTubes.mesh.visible = false;
 
   const group = new THREE.Group();
-  group.add(extrusionLines, extrusionTubes, travelLines);
+  group.add(extrusionLines, extrusionTubes.mesh, travelLines);
 
   const layerCounts = computeLayerCounts(layers, moves);
   const movePrefix = computeMovePrefixCounts(moves);
+  let visibleMoveCount = moves.length;
 
   function applyCounts(extrusionCount: number, travelCount: number): void {
     extrusionGeometry.setDrawRange(0, extrusionCount * 2);
     travelGeometry.setDrawRange(0, travelCount * 2);
-    extrusionTubes.count = extrusionCount;
+    extrusionTubes.mesh.count = extrusionCount;
   }
 
   function setVisibleThroughLayer(layerIndex: number): void {
     const clamped = Math.max(0, Math.min(layerIndex, layerCounts.length - 1));
     const counts = layerCounts[clamped] ?? { extrusion: 0, travel: 0 };
+    visibleMoveCount = layers[clamped]?.endMove ?? 0;
     applyCounts(counts.extrusion, counts.travel);
   }
 
   function setVisibleThroughMove(moveIndex: number): void {
     const clamped = Math.max(-1, Math.min(moveIndex, moves.length - 1));
+    visibleMoveCount = clamped + 1;
     applyCounts(movePrefix.extrusion[clamped + 1], movePrefix.travel[clamped + 1]);
   }
 
@@ -276,17 +233,17 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   function setColorMode(mode: ColorMode): void {
     applyLineColors(extrusionGeometry, extrudeMoves, mode, EXTRUSION_COLOR, extrudeCtx);
     applyLineColors(travelGeometry, travelMoves, mode, TRAVEL_COLOR, travelCtx);
-    applyTubeColors(extrusionTubes, extrudeMoves, mode, EXTRUSION_COLOR, extrudeCtx);
+    applyTubeColors(extrusionTubes.mesh, extrudeMoves, mode, EXTRUSION_COLOR, extrudeCtx);
   }
 
   function setRenderMode(mode: RenderMode): void {
     extrusionLines.visible = mode === 'lines';
-    extrusionTubes.visible = mode === 'tubes';
+    extrusionTubes.mesh.visible = mode === 'tubes';
   }
 
   function setExtrusionWidth(width: number): void {
     extrusionWidth = Math.max(MIN_EXTRUSION_WIDTH, Math.min(width, MAX_EXTRUSION_WIDTH));
-    updateTubeTransforms(extrusionTubes, extrudeMoves, extrusionWidth / 2);
+    extrusionTubes.setRadius(extrusionWidth / 2);
   }
 
   function dispose(): void {
@@ -294,8 +251,7 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
     travelGeometry.dispose();
     extrusionLinesMaterial.dispose();
     travelMaterial.dispose();
-    extrusionTubes.geometry.dispose();
-    (extrusionTubes.material as THREE.Material).dispose();
+    extrusionTubes.dispose();
   }
 
   setVisibleThroughLayer(layers.length - 1);
@@ -310,6 +266,7 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
     setColorMode,
     setRenderMode,
     setExtrusionWidth,
+    getVisibleMoveCount: () => visibleMoveCount,
     dispose,
   };
 }

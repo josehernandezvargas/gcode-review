@@ -37,9 +37,14 @@ building it — it belongs in a separate backend project.
 
 - `src/parser/` — G-code parsing only. Pure functions. No DOM, no Three.js
   imports here.
+- `src/analysis/` — checks over an already-parsed toolpath (build volume,
+  travel/nozzle collisions) plus the packed typed-array form they run on.
+  Pure functions, same rules as `src/parser/`. See `src/analysis/README.md`.
 - `src/render/` — Three.js scene, geometry, camera. No parsing logic.
-- `src/ui/` — DOM controls: drop zone, sidebar, scrubber, playback.
-- `src/worker/` — thin wrapper exposing the parser to the main thread.
+- `src/ui/` — DOM controls: drop zone, sidebar, scrubber, playback,
+  measurement/analysis panels.
+- `src/worker/` — thin wrappers exposing the parser and the analysis pass to
+  the main thread.
 
 Keep these boundaries. If you find yourself importing Three.js into
 `src/parser/`, or DOM APIs into the worker, stop and reconsider the module

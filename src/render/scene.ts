@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BUILD_PLATE_COLOR, GRID_COLOR_MAJOR, GRID_COLOR_MINOR } from './colors';
 import type { Bounds } from '../parser';
 import type { MachineProfile } from './machines';
+import { disposeObjectTree, makeLabelSprite, setLabelHeight } from './labels';
 
 export interface BuildVolumeOptions {
   bounds: Bounds;
@@ -39,23 +40,6 @@ function niceInterval(span: number, maxTicks = MAX_SCALE_TICKS): number {
   return niceResidual * magnitude;
 }
 
-function makeLabelSprite(text: string): THREE.Sprite {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.font = '40px system-ui, sans-serif';
-    ctx.fillStyle = '#cfd8dc';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
-  return new THREE.Sprite(material);
-}
-
 /** A row of tick marks + "Nmm" labels along the build plate's front edge, as a graphical scale reference. */
 function buildScaleGroup(sizeX: number, minWorldX: number, frontWorldZ: number): THREE.Group {
   const group = new THREE.Group();
@@ -73,32 +57,15 @@ function buildScaleGroup(sizeX: number, minWorldX: number, frontWorldZ: number):
   lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePoints, 3));
   group.add(new THREE.LineSegments(lineGeometry, new THREE.LineBasicMaterial({ color: 0xcfd8dc })));
 
-  const labelScale = Math.max(sizeX, 1) * 0.05;
+  const labelHeight = Math.max(sizeX, 1) * 0.05;
   for (const x of tickPositions) {
     const sprite = makeLabelSprite(`${Math.round(x)}mm`);
-    sprite.scale.set(labelScale * 2, labelScale, 1);
+    setLabelHeight(sprite, labelHeight);
     sprite.position.set(minWorldX + x, tickHeight * 2.5, frontWorldZ);
     group.add(sprite);
   }
 
   return group;
-}
-
-/** Disposes geometry/materials under a helper group. Skips Sprite geometry, which is a shared static instance. */
-function disposeHelperGroup(object: THREE.Object3D | null): void {
-  if (!object) return;
-  object.traverse((child) => {
-    if (child instanceof THREE.Sprite) {
-      child.material.dispose();
-      return;
-    }
-    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
-      child.geometry.dispose();
-      const material = child.material;
-      if (Array.isArray(material)) material.forEach((m) => m.dispose());
-      else material.dispose();
-    }
-  });
 }
 
 export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
@@ -148,7 +115,7 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
     }
     if (scaleGroup) {
       scene.remove(scaleGroup);
-      disposeHelperGroup(scaleGroup);
+      disposeObjectTree(scaleGroup);
       scaleGroup = null;
     }
 
@@ -249,7 +216,7 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
       volumeBox.geometry.dispose();
       (volumeBox.material as THREE.Material).dispose();
     }
-    disposeHelperGroup(scaleGroup);
+    disposeObjectTree(scaleGroup);
     controls.dispose();
     renderer.dispose();
   }

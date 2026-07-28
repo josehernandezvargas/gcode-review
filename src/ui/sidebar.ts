@@ -1,4 +1,5 @@
 import type { ParseResult } from '../parser';
+import { escapeHtml } from './html';
 
 /**
  * Renders file stats. Every field beyond bbox/layers is optional — omitted
@@ -60,10 +61,4 @@ function formatDuration(totalSeconds: number): string {
   if (h || m) parts.push(`${m}m`);
   parts.push(`${s}s`);
   return parts.join(' ');
-}
-
-function escapeHtml(value: string): string {
-  const div = document.createElement('div');
-  div.textContent = value;
-  return div.innerHTML;
 }

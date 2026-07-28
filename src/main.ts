@@ -1,23 +1,36 @@
-import { parseGCodeFile } from './worker/client';
+import { analyzeToolpathAsync, parseGCodeFile } from './worker/client';
 import {
   createViewerScene,
   buildToolpath,
+  createBoundingBoxHelper,
+  createIssueMarkers,
+  createMeasureTool,
   MACHINE_PRESETS,
   FIT_TO_MODEL_ID,
   getMachineProfile,
+  machineBuildVolume,
+  type Annotation,
   type ColorMode,
   type RenderMode,
   type Toolpath,
   type MachineProfile,
 } from './render';
-import { initDropZone, renderSidebar, initPlayback } from './ui';
+import {
+  initDropZone,
+  renderSidebar,
+  initPlayback,
+  renderMeasurePanel,
+  renderAnalysisPanel,
+  type AnalysisStatus,
+} from './ui';
+import { extractVertices, packToolpath, type AnalysisReport, type PackedToolpath } from './analysis';
 import type { Bounds, ParseResult } from './parser';
 
 const dropZone = document.getElementById('drop-zone') as HTMLElement;
 const fileInput = document.getElementById('file-input') as HTMLInputElement;
 const viewer = document.getElementById('viewer') as HTMLElement;
 const canvas = document.getElementById('scene-canvas') as HTMLCanvasElement;
-const sidebar = document.getElementById('sidebar') as HTMLElement;
+const sidebarStats = document.getElementById('sidebar-stats') as HTMLElement;
 const playPauseButton = document.getElementById('play-pause') as HTMLButtonElement;
 const layerScrubber = document.getElementById('layer-scrubber') as HTMLInputElement;
 const layerLabel = document.getElementById('layer-label') as HTMLElement;
@@ -32,6 +45,13 @@ const extrusionWidthSlider = document.getElementById('extrusion-width') as HTMLI
 const extrusionWidthLabel = document.getElementById('extrusion-width-label') as HTMLElement;
 const machineSelect = document.getElementById('machine-select') as HTMLSelectElement;
 const toggleScale = document.getElementById('toggle-scale') as HTMLInputElement;
+const toggleBoundingBox = document.getElementById('toggle-bounding-box') as HTMLInputElement;
+const toggleIssueMarkers = document.getElementById('toggle-issue-markers') as HTMLInputElement;
+const measureToggle = document.getElementById('measure-toggle') as HTMLButtonElement;
+const measureClear = document.getElementById('measure-clear') as HTMLButtonElement;
+const measureReadout = document.getElementById('measure-readout') as HTMLElement;
+const analysisRunButton = document.getElementById('analysis-run') as HTMLButtonElement;
+const analysisResults = document.getElementById('analysis-results') as HTMLElement;
 
 for (const machine of MACHINE_PRESETS) {
   const option = document.createElement('option');
@@ -44,14 +64,33 @@ const viewerScene = createViewerScene(canvas);
 let currentToolpath: Toolpath | null = null;
 let currentResult: ParseResult | null = null;
 let currentFileName = '';
+let packed: PackedToolpath | null = null;
+let boundingBox: Annotation | null = null;
+let issueMarkers: Annotation | null = null;
+let currentReport: AnalysisReport | null = null;
+let pendingAnalysis: { cancel(): void } | null = null;
+
+const measureTool = createMeasureTool(viewerScene.camera, (state) => {
+  renderMeasurePanel(measureReadout, state);
+});
+viewerScene.scene.add(measureTool.object);
+renderMeasurePanel(measureReadout, measureTool.getState());
+renderAnalysisPanel(analysisResults, { state: 'idle' });
 
 const playback = initPlayback(
   { playPauseButton, scrubber: layerScrubber, label: layerLabel, modeLayersRadio, modePointsRadio },
   (mode, index) => {
     if (mode === 'layers') currentToolpath?.setVisibleThroughLayer(index);
     else currentToolpath?.setVisibleThroughMove(index);
+    syncMeasureVisibility();
   },
 );
+
+/** Keeps measurement snapping to the part of the toolpath the scrubber reveals. */
+function syncMeasureVisibility(): void {
+  const visibleMoves = currentToolpath?.getVisibleMoveCount() ?? 0;
+  measureTool.setVisibleVertexCount(visibleMoves > 0 ? visibleMoves + 1 : 0);
+}
 
 toggleTravel.addEventListener('change', () => {
   currentToolpath?.setShowTravel(toggleTravel.checked);
@@ -77,8 +116,51 @@ extrusionWidthSlider.addEventListener('input', () => {
   currentToolpath?.setExtrusionWidth(width);
 });
 
-machineSelect.addEventListener('change', () => applyBuildVolume());
+machineSelect.addEventListener('change', () => {
+  applyBuildVolume();
+  runAnalysis();
+});
 toggleScale.addEventListener('change', () => viewerScene.setScaleVisible(toggleScale.checked));
+toggleBoundingBox.addEventListener('change', () => refreshBoundingBox());
+toggleIssueMarkers.addEventListener('change', () => refreshIssueMarkers());
+
+measureToggle.addEventListener('click', () => {
+  const enabled = measureToggle.getAttribute('aria-pressed') !== 'true';
+  measureToggle.setAttribute('aria-pressed', String(enabled));
+  measureToggle.textContent = enabled ? 'On' : 'Off';
+  canvas.classList.toggle('measuring', enabled);
+  measureTool.setEnabled(enabled);
+  if (enabled) syncMeasureVisibility();
+});
+
+measureClear.addEventListener('click', () => measureTool.clear());
+
+// Distinguishes a measurement click from an orbit drag: OrbitControls owns the
+// same pointer events, so only a near-stationary press counts as a pick.
+let pointerDownAt: { x: number; y: number } | null = null;
+const CLICK_SLOP_PX = 4;
+
+canvas.addEventListener('pointerdown', (event) => {
+  pointerDownAt = { x: event.clientX, y: event.clientY };
+});
+
+canvas.addEventListener('pointerup', (event) => {
+  const down = pointerDownAt;
+  pointerDownAt = null;
+  if (!down || !measureTool.getState().enabled) return;
+  if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) return;
+  const rect = canvas.getBoundingClientRect();
+  measureTool.pick(event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height);
+});
+
+analysisRunButton.addEventListener('click', () => runAnalysis());
+
+analysisResults.addEventListener('click', (event) => {
+  const target = (event.target as HTMLElement).closest('.issue-row');
+  if (!(target instanceof HTMLElement)) return;
+  const layer = Number(target.dataset.layer);
+  if (Number.isFinite(layer)) playback.showLayer(layer);
+});
 
 window.addEventListener('resize', () => viewerScene.resize());
 
@@ -89,12 +171,16 @@ initDropZone({ container: dropZone, input: fileInput }, (file) => {
   });
 });
 
+function selectedMachine(): MachineProfile | undefined {
+  return machineSelect.value === FIT_TO_MODEL_ID ? undefined : getMachineProfile(machineSelect.value);
+}
+
 /** Applies the currently selected machine (or "fit to model") to the scene and refreshes the sidebar warning. */
 function applyBuildVolume(): void {
   if (!currentResult) return;
-  const machine = machineSelect.value === FIT_TO_MODEL_ID ? undefined : getMachineProfile(machineSelect.value);
+  const machine = selectedMachine();
   viewerScene.setBuildVolume({ bounds: currentResult.bounds, machine });
-  renderSidebar(sidebar, currentFileName, currentResult, outOfBoundsWarning(currentResult.bounds, machine));
+  renderSidebar(sidebarStats, currentFileName, currentResult, outOfBoundsWarning(currentResult.bounds, machine));
 }
 
 function outOfBoundsWarning(bounds: Bounds, machine: MachineProfile | undefined): string | undefined {
@@ -108,10 +194,82 @@ function outOfBoundsWarning(bounds: Bounds, machine: MachineProfile | undefined)
   return undefined;
 }
 
+/** Largest model dimension, used to scale in-scene annotations. */
+function sceneSize(): number {
+  if (!currentResult) return 100;
+  const { min, max } = currentResult.bounds;
+  return Math.max(max.x - min.x, max.y - min.y, max.z - min.z, 1);
+}
+
+/**
+ * Bounds for the drawn box. Extrusion-only bounds are preferred once the
+ * analysis has run — priming lines and parking travel can sit well outside
+ * the printed part, which is what the box is supposed to describe.
+ */
+function printBounds(): Bounds | null {
+  if (currentReport?.summary.printBounds) return currentReport.summary.printBounds;
+  return currentResult?.bounds ?? null;
+}
+
+function refreshBoundingBox(): void {
+  if (boundingBox) {
+    viewerScene.scene.remove(boundingBox.object);
+    boundingBox.dispose();
+    boundingBox = null;
+  }
+  const bounds = printBounds();
+  if (!toggleBoundingBox.checked || !bounds) return;
+  boundingBox = createBoundingBoxHelper(bounds);
+  viewerScene.scene.add(boundingBox.object);
+}
+
+function refreshIssueMarkers(): void {
+  if (issueMarkers) {
+    viewerScene.scene.remove(issueMarkers.object);
+    issueMarkers.dispose();
+    issueMarkers = null;
+  }
+  if (!toggleIssueMarkers.checked || !currentReport) return;
+  issueMarkers = createIssueMarkers(currentReport.groups, sceneSize());
+  viewerScene.scene.add(issueMarkers.object);
+}
+
+/** Runs the collision/volume checks in a worker; a newer run supersedes an in-flight one. */
+function runAnalysis(): void {
+  if (!packed) return;
+  pendingAnalysis?.cancel();
+  currentReport = null;
+  refreshIssueMarkers();
+  renderAnalysisPanel(analysisResults, { state: 'running' });
+
+  const machine = selectedMachine();
+  const run = analyzeToolpathAsync(packed, {
+    volume: machine ? machineBuildVolume(machine) : undefined,
+  });
+  pendingAnalysis = run;
+
+  run.promise
+    .then((report) => {
+      pendingAnalysis = null;
+      currentReport = report;
+      const status: AnalysisStatus = { state: 'ready', report };
+      renderAnalysisPanel(analysisResults, status);
+      refreshIssueMarkers();
+      refreshBoundingBox();
+    })
+    .catch((err: unknown) => {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      pendingAnalysis = null;
+      const message = err instanceof Error ? err.message : String(err);
+      renderAnalysisPanel(analysisResults, { state: 'error', message: `Analysis failed: ${message}` });
+    });
+}
+
 async function loadFile(file: File): Promise<void> {
   const result = await parseGCodeFile(file);
   currentResult = result;
   currentFileName = file.name;
+  currentReport = null;
 
   if (currentToolpath) {
     viewerScene.scene.remove(currentToolpath.object);
@@ -125,8 +283,15 @@ async function loadFile(file: File): Promise<void> {
   currentToolpath.setRenderMode(renderModeSelect.value as RenderMode);
   currentToolpath.setExtrusionWidth(Number(extrusionWidthSlider.value));
 
+  packed = packToolpath(result.moves, result.layers);
+  measureTool.setVertices(extractVertices(packed));
+  measureTool.setSceneSize(sceneSize());
+
   applyBuildVolume();
   playback.setCounts(result.layers.length, result.moves.length);
+  syncMeasureVisibility();
+  refreshBoundingBox();
+  runAnalysis();
 
   dropZone.hidden = true;
   viewer.hidden = false;
