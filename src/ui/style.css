@@ -41,6 +41,32 @@ body {
   display: none;
 }
 
+#example-files {
+  margin-top: 1.5rem;
+}
+
+#example-files p {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: #999;
+}
+
+#example-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#example-file-list button {
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+}
+
 #viewer {
   height: 100%;
   display: grid;
@@ -68,6 +94,23 @@ body {
   padding: 1rem;
   background: #222;
   overflow-y: auto;
+}
+
+#load-new {
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  cursor: pointer;
+}
+
+.sidebar-warning {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 176, 0, 0.15);
+  border: 1px solid rgba(255, 176, 0, 0.4);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: #ffb000;
 }
 
 .stats .stat {
@@ -245,7 +288,8 @@ body {
 #settings-panel {
   grid-area: settings;
   display: flex;
-  gap: 1.5rem;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
   padding: 0.75rem 1rem;
   background: #1e1e1e;
   border-top: 1px solid #333;

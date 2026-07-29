@@ -2,6 +2,7 @@
 ;TIME:42
 ;Filament used: 0.032m
 ;Layer height: 0.2
+;TARGET_MACHINE.NAME:Ultimaker S5
 ;Generated with Cura_SteamEngine 5.6.0
 M82 ;absolute extrusion mode
 G21 ;metric values

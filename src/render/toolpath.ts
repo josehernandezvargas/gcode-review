@@ -25,6 +25,7 @@ export interface Toolpath {
   setShowTravel(show: boolean): void;
   setColorMode(mode: ColorMode): void;
   setRenderMode(mode: RenderMode): void;
+  /** Horizontal bead width (nozzle diameter) — the tube's cross-section is wider than it is tall. */
   setExtrusionWidth(width: number): void;
   /** Number of leading moves currently revealed by the scrubber. */
   getVisibleMoveCount(): number;
@@ -148,6 +149,15 @@ function computeMovePrefixCounts(moves: Move[]): { extrusion: Uint32Array; trave
   return { extrusion, travel };
 }
 
+function buildPointMarker(): THREE.Mesh {
+  const geometry = new THREE.SphereGeometry(1, 16, 12);
+  const material = new THREE.MeshBasicMaterial({ color: POINT_MARKER_COLOR });
+  const marker = new THREE.Mesh(geometry, material);
+  marker.visible = false;
+  marker.frustumCulled = false;
+  return marker;
+}
+
 /** Builds toolpath geometry once; layer/point scrubbing after this is just a drawRange/count update. */
 export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   const extrudeMoves: Move[] = [];
@@ -200,6 +210,8 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   extrusionTubes.mesh.frustumCulled = false;
   extrusionTubes.mesh.visible = false;
 
+  const pointMarker = buildPointMarker();
+
   const group = new THREE.Group();
   group.add(extrusionLines, extrusionTubes.mesh, travelLines);
 
@@ -224,6 +236,13 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
     const clamped = Math.max(-1, Math.min(moveIndex, moves.length - 1));
     visibleMoveCount = clamped + 1;
     applyCounts(movePrefix.extrusion[clamped + 1], movePrefix.travel[clamped + 1]);
+
+    if (clamped >= 0) {
+      const m = moves[clamped];
+      const scenePos = new THREE.Vector3();
+      toSceneVec(m.x1, m.y1, m.z1, scenePos);
+      pointMarker.position.copy(scenePos);
+    }
   }
 
   function setShowTravel(show: boolean): void {
@@ -255,6 +274,7 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   }
 
   setVisibleThroughLayer(layers.length - 1);
+  pointMarker.scale.setScalar(layerHeight);
 
   return {
     object: group,

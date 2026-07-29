@@ -43,6 +43,8 @@ const settingsPanel = document.getElementById('settings-panel') as HTMLElement;
 const renderModeSelect = document.getElementById('render-mode') as HTMLSelectElement;
 const extrusionWidthSlider = document.getElementById('extrusion-width') as HTMLInputElement;
 const extrusionWidthLabel = document.getElementById('extrusion-width-label') as HTMLElement;
+const layerHeightSlider = document.getElementById('layer-height') as HTMLInputElement;
+const layerHeightLabel = document.getElementById('layer-height-label') as HTMLElement;
 const machineSelect = document.getElementById('machine-select') as HTMLSelectElement;
 const toggleScale = document.getElementById('toggle-scale') as HTMLInputElement;
 const toggleBoundingBox = document.getElementById('toggle-bounding-box') as HTMLInputElement;
@@ -58,6 +60,26 @@ for (const machine of MACHINE_PRESETS) {
   option.value = machine.id;
   option.textContent = `${machine.name} (${machine.size.x}×${machine.size.y}×${machine.size.z}mm)`;
   machineSelect.appendChild(option);
+}
+
+for (const example of EXAMPLE_FILES) {
+  const item = document.createElement('li');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = example.label;
+  button.addEventListener('click', (event) => {
+    // Stop this from bubbling to #drop-zone's own click handler, which would
+    // also pop open the native file picker on top of loading the example.
+    event.stopPropagation();
+    loadExampleFile(example.fileName)
+      .then((file) => loadFile(file))
+      .catch((err) => {
+        console.error('Failed to load example file', err);
+        alert(`Could not load example file: ${err instanceof Error ? err.message : err}`);
+      });
+  });
+  item.appendChild(button);
+  exampleFileList.appendChild(item);
 }
 
 const viewerScene = createViewerScene(canvas);
@@ -161,6 +183,8 @@ analysisResults.addEventListener('click', (event) => {
   const layer = Number(target.dataset.layer);
   if (Number.isFinite(layer)) playback.showLayer(layer);
 });
+
+loadNewButton.addEventListener('click', () => fileInput.click());
 
 window.addEventListener('resize', () => viewerScene.resize());
 
@@ -281,7 +305,23 @@ async function loadFile(file: File): Promise<void> {
   currentToolpath.setShowTravel(toggleTravel.checked);
   currentToolpath.setColorMode(colorModeSelect.value as ColorMode);
   currentToolpath.setRenderMode(renderModeSelect.value as RenderMode);
-  currentToolpath.setExtrusionWidth(Number(extrusionWidthSlider.value));
+
+  // Prefer the file's own declared nozzle width/layer height over whatever
+  // was left on the sliders from a previously loaded, unrelated file.
+  const nozzleWidth = result.metadata.nozzleDiameterMm ?? DEFAULT_EXTRUSION_WIDTH;
+  const layerHeight = result.metadata.layerHeightMm ?? DEFAULT_LAYER_HEIGHT;
+  extrusionWidthSlider.value = String(nozzleWidth);
+  extrusionWidthLabel.textContent = `${nozzleWidth.toFixed(2)} mm`;
+  currentToolpath.setExtrusionWidth(nozzleWidth);
+  layerHeightSlider.value = String(layerHeight);
+  layerHeightLabel.textContent = `${layerHeight.toFixed(2)} mm`;
+  currentToolpath.setLayerHeight(layerHeight);
+
+  // If the file names its target machine and it matches a known preset, select it.
+  if (result.metadata.machineName) {
+    const matched = findMachineByName(result.metadata.machineName);
+    if (matched) machineSelect.value = matched.id;
+  }
 
   packed = packToolpath(result.moves, result.layers);
   measureTool.setVertices(extractVertices(packed));

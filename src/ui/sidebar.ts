@@ -39,6 +39,8 @@ export function renderSidebar(container: HTMLElement, fileName: string, result: 
   if (metadata.filamentType) rows.push(row('Filament type', metadata.filamentType));
   if (metadata.nozzleTempC !== undefined) rows.push(row('Nozzle temp', `${metadata.nozzleTempC}°C`));
   if (metadata.bedTempC !== undefined) rows.push(row('Bed temp', `${metadata.bedTempC}°C`));
+  if (metadata.machineName) rows.push(row('Target machine', metadata.machineName));
+  if (metadata.createdAt) rows.push(row('Created', metadata.createdAt));
 
   const warningHtml = warning ? `<p class="sidebar-warning">${escapeHtml(warning)}</p>` : '';
   container.innerHTML = `${warningHtml}<dl class="stats">${rows.join('')}</dl>`;
