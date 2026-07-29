@@ -5,19 +5,23 @@ import {
   MACHINE_PRESETS,
   FIT_TO_MODEL_ID,
   getMachineProfile,
+  findMachineByName,
+  DEFAULT_EXTRUSION_WIDTH,
+  DEFAULT_LAYER_HEIGHT,
   type ColorMode,
   type RenderMode,
   type Toolpath,
   type MachineProfile,
 } from './render';
-import { initDropZone, renderSidebar, initPlayback } from './ui';
+import { initDropZone, renderSidebar, initPlayback, EXAMPLE_FILES, loadExampleFile } from './ui';
 import type { Bounds, ParseResult } from './parser';
 
 const dropZone = document.getElementById('drop-zone') as HTMLElement;
 const fileInput = document.getElementById('file-input') as HTMLInputElement;
 const viewer = document.getElementById('viewer') as HTMLElement;
 const canvas = document.getElementById('scene-canvas') as HTMLCanvasElement;
-const sidebar = document.getElementById('sidebar') as HTMLElement;
+const loadNewButton = document.getElementById('load-new') as HTMLButtonElement;
+const sidebarContent = document.getElementById('sidebar-content') as HTMLElement;
 const playPauseButton = document.getElementById('play-pause') as HTMLButtonElement;
 const layerScrubber = document.getElementById('layer-scrubber') as HTMLInputElement;
 const layerLabel = document.getElementById('layer-label') as HTMLElement;
@@ -30,14 +34,37 @@ const settingsPanel = document.getElementById('settings-panel') as HTMLElement;
 const renderModeSelect = document.getElementById('render-mode') as HTMLSelectElement;
 const extrusionWidthSlider = document.getElementById('extrusion-width') as HTMLInputElement;
 const extrusionWidthLabel = document.getElementById('extrusion-width-label') as HTMLElement;
+const layerHeightSlider = document.getElementById('layer-height') as HTMLInputElement;
+const layerHeightLabel = document.getElementById('layer-height-label') as HTMLElement;
 const machineSelect = document.getElementById('machine-select') as HTMLSelectElement;
 const toggleScale = document.getElementById('toggle-scale') as HTMLInputElement;
+const exampleFileList = document.getElementById('example-file-list') as HTMLElement;
 
 for (const machine of MACHINE_PRESETS) {
   const option = document.createElement('option');
   option.value = machine.id;
   option.textContent = `${machine.name} (${machine.size.x}×${machine.size.y}×${machine.size.z}mm)`;
   machineSelect.appendChild(option);
+}
+
+for (const example of EXAMPLE_FILES) {
+  const item = document.createElement('li');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = example.label;
+  button.addEventListener('click', (event) => {
+    // Stop this from bubbling to #drop-zone's own click handler, which would
+    // also pop open the native file picker on top of loading the example.
+    event.stopPropagation();
+    loadExampleFile(example.fileName)
+      .then((file) => loadFile(file))
+      .catch((err) => {
+        console.error('Failed to load example file', err);
+        alert(`Could not load example file: ${err instanceof Error ? err.message : err}`);
+      });
+  });
+  item.appendChild(button);
+  exampleFileList.appendChild(item);
 }
 
 const viewerScene = createViewerScene(canvas);
@@ -48,8 +75,14 @@ let currentFileName = '';
 const playback = initPlayback(
   { playPauseButton, scrubber: layerScrubber, label: layerLabel, modeLayersRadio, modePointsRadio },
   (mode, index) => {
-    if (mode === 'layers') currentToolpath?.setVisibleThroughLayer(index);
-    else currentToolpath?.setVisibleThroughMove(index);
+    if (!currentToolpath) return;
+    if (mode === 'layers') {
+      currentToolpath.setVisibleThroughLayer(index);
+      currentToolpath.setPointMarkerVisible(false);
+    } else {
+      currentToolpath.setVisibleThroughMove(index);
+      currentToolpath.setPointMarkerVisible(true);
+    }
   },
 );
 
@@ -77,8 +110,16 @@ extrusionWidthSlider.addEventListener('input', () => {
   currentToolpath?.setExtrusionWidth(width);
 });
 
+layerHeightSlider.addEventListener('input', () => {
+  const height = Number(layerHeightSlider.value);
+  layerHeightLabel.textContent = `${height.toFixed(2)} mm`;
+  currentToolpath?.setLayerHeight(height);
+});
+
 machineSelect.addEventListener('change', () => applyBuildVolume());
 toggleScale.addEventListener('change', () => viewerScene.setScaleVisible(toggleScale.checked));
+
+loadNewButton.addEventListener('click', () => fileInput.click());
 
 window.addEventListener('resize', () => viewerScene.resize());
 
@@ -94,7 +135,7 @@ function applyBuildVolume(): void {
   if (!currentResult) return;
   const machine = machineSelect.value === FIT_TO_MODEL_ID ? undefined : getMachineProfile(machineSelect.value);
   viewerScene.setBuildVolume({ bounds: currentResult.bounds, machine });
-  renderSidebar(sidebar, currentFileName, currentResult, outOfBoundsWarning(currentResult.bounds, machine));
+  renderSidebar(sidebarContent, currentFileName, currentResult, outOfBoundsWarning(currentResult.bounds, machine));
 }
 
 function outOfBoundsWarning(bounds: Bounds, machine: MachineProfile | undefined): string | undefined {
@@ -123,7 +164,23 @@ async function loadFile(file: File): Promise<void> {
   currentToolpath.setShowTravel(toggleTravel.checked);
   currentToolpath.setColorMode(colorModeSelect.value as ColorMode);
   currentToolpath.setRenderMode(renderModeSelect.value as RenderMode);
-  currentToolpath.setExtrusionWidth(Number(extrusionWidthSlider.value));
+
+  // Prefer the file's own declared nozzle width/layer height over whatever
+  // was left on the sliders from a previously loaded, unrelated file.
+  const nozzleWidth = result.metadata.nozzleDiameterMm ?? DEFAULT_EXTRUSION_WIDTH;
+  const layerHeight = result.metadata.layerHeightMm ?? DEFAULT_LAYER_HEIGHT;
+  extrusionWidthSlider.value = String(nozzleWidth);
+  extrusionWidthLabel.textContent = `${nozzleWidth.toFixed(2)} mm`;
+  currentToolpath.setExtrusionWidth(nozzleWidth);
+  layerHeightSlider.value = String(layerHeight);
+  layerHeightLabel.textContent = `${layerHeight.toFixed(2)} mm`;
+  currentToolpath.setLayerHeight(layerHeight);
+
+  // If the file names its target machine and it matches a known preset, select it.
+  if (result.metadata.machineName) {
+    const matched = findMachineByName(result.metadata.machineName);
+    if (matched) machineSelect.value = matched.id;
+  }
 
   applyBuildVolume();
   playback.setCounts(result.layers.length, result.moves.length);

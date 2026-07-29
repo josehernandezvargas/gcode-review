@@ -5,6 +5,8 @@ export const TRAVEL_COLOR = new THREE.Color(0x3399ff);
 export const BUILD_PLATE_COLOR = 0x444444;
 export const GRID_COLOR_MAJOR = 0x666666;
 export const GRID_COLOR_MINOR = 0x333333;
+/** Highlight accent for the current-point marker shown in Points scrub mode. */
+export const POINT_MARKER_COLOR = 0x00ffa2;
 
 const SPEED_HUE_LOW = 240 / 360; // blue
 const SPEED_HUE_HIGH = 0; // red

@@ -43,6 +43,10 @@ export interface ParseMetadata {
   layerHeightMm?: number;
   nozzleDiameterMm?: number;
   filamentType?: string;
+  /** Target printer name/model as declared by the slicer (Cura's TARGET_MACHINE.NAME, PrusaSlicer's printer_model). */
+  machineName?: string;
+  /** File creation date/time, as declared by the slicer/script (raw string, not reformatted). */
+  createdAt?: string;
   /** All comment lines encountered, unparsed — kept for display/debugging fallback. */
   raw: string[];
 }

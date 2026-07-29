@@ -1,13 +1,16 @@
 import * as THREE from 'three';
 import type { Layer, Move } from '../parser';
-import { EXTRUSION_COLOR, TRAVEL_COLOR, featureToColor, layerToColor, speedToColor } from './colors';
+import { EXTRUSION_COLOR, POINT_MARKER_COLOR, TRAVEL_COLOR, featureToColor, layerToColor, speedToColor } from './colors';
 
 export type ColorMode = 'move-type' | 'speed' | 'layer' | 'feature';
 export type RenderMode = 'lines' | 'tubes';
 
 export const DEFAULT_EXTRUSION_WIDTH = 0.4; // mm, matches a common 0.4mm nozzle
 export const MIN_EXTRUSION_WIDTH = 0.1;
-export const MAX_EXTRUSION_WIDTH = 1.2;
+export const MAX_EXTRUSION_WIDTH = 2.0;
+export const DEFAULT_LAYER_HEIGHT = 0.2; // mm, a common FDM default
+export const MIN_LAYER_HEIGHT = 0.05;
+export const MAX_LAYER_HEIGHT = 1.0;
 const TUBE_RADIAL_SEGMENTS = 6;
 
 export interface LayerCount {
@@ -25,7 +28,12 @@ export interface Toolpath {
   setShowTravel(show: boolean): void;
   setColorMode(mode: ColorMode): void;
   setRenderMode(mode: RenderMode): void;
+  /** Horizontal bead width (nozzle diameter) — the tube's cross-section is wider than it is tall. */
   setExtrusionWidth(width: number): void;
+  /** Vertical bead height (layer height) — the tube's cross-section is wider than it is tall. */
+  setLayerHeight(height: number): void;
+  /** Shows/hides the highlighted sphere marking the last revealed point (Points scrub mode). */
+  setPointMarkerVisible(visible: boolean): void;
   dispose(): void;
 }
 
@@ -111,23 +119,45 @@ function applyLineColors(
   colorAttr.needsUpdate = true;
 }
 
-const UP_AXIS = new THREE.Vector3(0, 1, 0);
-
-/** Builds one oriented, scaled cylinder instance per move, standing in for a tube segment. */
-function buildTubeMesh(moves: Move[], radius: number): THREE.InstancedMesh {
+/** Builds one oriented, elliptically-scaled cylinder instance per move, standing in for a tube segment. */
+function buildTubeMesh(moves: Move[], widthRadius: number, heightRadius: number): THREE.InstancedMesh {
   const geometry = new THREE.CylinderGeometry(1, 1, 1, TUBE_RADIAL_SEGMENTS, 1, true);
   const material = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.05 });
   const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, moves.length));
   mesh.count = moves.length;
-  updateTubeTransforms(mesh, moves, radius);
+  updateTubeTransforms(mesh, moves, widthRadius, heightRadius);
   return mesh;
 }
 
-function updateTubeTransforms(mesh: THREE.InstancedMesh, moves: Move[], radius: number): void {
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const WORLD_X = new THREE.Vector3(1, 0, 0);
+
+/**
+ * Picks a stable perpendicular basis for a travel direction: `right` is
+ * horizontal (perpendicular to both the direction and world-up — this is
+ * the bead's "width" axis), `up` is whatever's left (the bead's "height"
+ * axis, close to vertical except for near-vertical moves like Z-hops).
+ */
+function computeCrossSectionBasis(direction: THREE.Vector3, right: THREE.Vector3, up: THREE.Vector3): void {
+  right.crossVectors(direction, WORLD_UP);
+  if (right.lengthSq() < 1e-8) right.crossVectors(direction, WORLD_X); // direction ~parallel to world-up
+  right.normalize();
+  up.crossVectors(right, direction).normalize();
+}
+
+function updateTubeTransforms(
+  mesh: THREE.InstancedMesh,
+  moves: Move[],
+  widthRadius: number,
+  heightRadius: number,
+): void {
   const start = new THREE.Vector3();
   const end = new THREE.Vector3();
   const direction = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  const up = new THREE.Vector3();
   const midpoint = new THREE.Vector3();
+  const basis = new THREE.Matrix4();
   const quaternion = new THREE.Quaternion();
   const scale = new THREE.Vector3();
   const matrix = new THREE.Matrix4();
@@ -145,8 +175,11 @@ function updateTubeTransforms(mesh: THREE.InstancedMesh, moves: Move[], radius: 
       quaternion.identity();
     } else {
       direction.divideScalar(length);
-      quaternion.setFromUnitVectors(UP_AXIS, direction);
-      scale.set(radius, length, radius);
+      computeCrossSectionBasis(direction, right, up);
+      // Cylinder's local axes: X/Z are the circular cross-section, Y is its length.
+      basis.makeBasis(right, direction, up);
+      quaternion.setFromRotationMatrix(basis);
+      scale.set(widthRadius, length, heightRadius);
     }
 
     matrix.compose(midpoint, quaternion, scale);
@@ -192,6 +225,15 @@ function computeMovePrefixCounts(moves: Move[]): { extrusion: Uint32Array; trave
     travel[i + 1] = travel[i] + (moves[i].extruding ? 0 : 1);
   }
   return { extrusion, travel };
+}
+
+function buildPointMarker(): THREE.Mesh {
+  const geometry = new THREE.SphereGeometry(1, 16, 12);
+  const material = new THREE.MeshBasicMaterial({ color: POINT_MARKER_COLOR });
+  const marker = new THREE.Mesh(geometry, material);
+  marker.visible = false;
+  marker.frustumCulled = false;
+  return marker;
 }
 
 /** Builds toolpath geometry once; layer/point scrubbing after this is just a drawRange/count update. */
@@ -241,13 +283,16 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   travelLines.frustumCulled = false;
 
   let extrusionWidth = DEFAULT_EXTRUSION_WIDTH;
-  const extrusionTubes = buildTubeMesh(extrudeMoves, extrusionWidth / 2);
+  let layerHeight = DEFAULT_LAYER_HEIGHT;
+  const extrusionTubes = buildTubeMesh(extrudeMoves, extrusionWidth / 2, layerHeight / 2);
   applyTubeColors(extrusionTubes, extrudeMoves, 'move-type', EXTRUSION_COLOR, extrudeCtx);
   extrusionTubes.frustumCulled = false;
   extrusionTubes.visible = false;
 
+  const pointMarker = buildPointMarker();
+
   const group = new THREE.Group();
-  group.add(extrusionLines, extrusionTubes, travelLines);
+  group.add(extrusionLines, extrusionTubes, travelLines, pointMarker);
 
   const layerCounts = computeLayerCounts(layers, moves);
   const movePrefix = computeMovePrefixCounts(moves);
@@ -267,6 +312,13 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   function setVisibleThroughMove(moveIndex: number): void {
     const clamped = Math.max(-1, Math.min(moveIndex, moves.length - 1));
     applyCounts(movePrefix.extrusion[clamped + 1], movePrefix.travel[clamped + 1]);
+
+    if (clamped >= 0) {
+      const m = moves[clamped];
+      const scenePos = new THREE.Vector3();
+      toSceneVec(m.x1, m.y1, m.z1, scenePos);
+      pointMarker.position.copy(scenePos);
+    }
   }
 
   function setShowTravel(show: boolean): void {
@@ -286,7 +338,17 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
 
   function setExtrusionWidth(width: number): void {
     extrusionWidth = Math.max(MIN_EXTRUSION_WIDTH, Math.min(width, MAX_EXTRUSION_WIDTH));
-    updateTubeTransforms(extrusionTubes, extrudeMoves, extrusionWidth / 2);
+    updateTubeTransforms(extrusionTubes, extrudeMoves, extrusionWidth / 2, layerHeight / 2);
+  }
+
+  function setLayerHeight(height: number): void {
+    layerHeight = Math.max(MIN_LAYER_HEIGHT, Math.min(height, MAX_LAYER_HEIGHT));
+    updateTubeTransforms(extrusionTubes, extrudeMoves, extrusionWidth / 2, layerHeight / 2);
+    pointMarker.scale.setScalar(layerHeight);
+  }
+
+  function setPointMarkerVisible(visible: boolean): void {
+    pointMarker.visible = visible;
   }
 
   function dispose(): void {
@@ -296,9 +358,12 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
     travelMaterial.dispose();
     extrusionTubes.geometry.dispose();
     (extrusionTubes.material as THREE.Material).dispose();
+    pointMarker.geometry.dispose();
+    (pointMarker.material as THREE.Material).dispose();
   }
 
   setVisibleThroughLayer(layers.length - 1);
+  pointMarker.scale.setScalar(layerHeight);
 
   return {
     object: group,
@@ -310,6 +375,8 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
     setColorMode,
     setRenderMode,
     setExtrusionWidth,
+    setLayerHeight,
+    setPointMarkerVisible,
     dispose,
   };
 }

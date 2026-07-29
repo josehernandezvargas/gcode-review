@@ -23,6 +23,7 @@ describe('parseGCode', () => {
     expect(result.metadata.layerHeightMm).toBeCloseTo(0.2);
     expect(result.metadata.nozzleTempC).toBe(200);
     expect(result.metadata.bedTempC).toBe(60);
+    expect(result.metadata.machineName).toBe('Ultimaker S5');
 
     const wallMove = result.moves.find((m) => m.feature === 'WALL-OUTER');
     expect(wallMove).toBeDefined();
@@ -40,6 +41,7 @@ describe('parseGCode', () => {
     expect(result.metadata.filamentType).toBe('PETG');
     expect(result.metadata.nozzleTempC).toBe(230);
     expect(result.metadata.bedTempC).toBe(70);
+    expect(result.metadata.machineName).toBe('MK3S');
 
     const perimeterMove = result.moves.find((m) => m.feature === 'Perimeter');
     expect(perimeterMove).toBeDefined();
@@ -53,6 +55,20 @@ describe('parseGCode', () => {
     const lastArcMove = result.moves.find((m) => m.extruding && Math.abs(m.y1 - 10) < 0.01);
     expect(lastArcMove).toBeDefined();
     expect(lastArcMove!.x1).toBeCloseTo(10, 1);
+  });
+
+  it('parses Ultimaker/custom-script colon-style comments (NOZZLE_DIAMETER, TARGET_MACHINE.NAME, split created-at)', () => {
+    const result = parseGCode(loadFixture('ultimaker_style.gcode'));
+
+    // 3, not 2: the pre-print setup move (G0 to Z20, before the first ;LAYER:
+    // marker) forms its own leading "layer" — real files have this too.
+    expect(result.layers).toHaveLength(3);
+    expect(result.metadata.printTimeSeconds).toBe(481);
+    expect(result.metadata.nozzleDiameterMm).toBeCloseTo(2.0);
+    expect(result.metadata.machineName).toBe('Ultimaker 2+');
+    expect(result.metadata.slicer).toBe('Python / GH');
+    expect(result.metadata.createdAt).toBe('20260703 6:46:58 PM');
+    expect(result.metadata.nozzleTempC).toBe(205);
   });
 
   it('falls back to Z-height layer detection when no layer comments are present', () => {

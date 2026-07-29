@@ -5,6 +5,7 @@
 ; layer_height = 0.2
 ; nozzle_diameter = 0.4,0.4,0.4,0.4
 ; filament_type = PETG
+; printer_model = MK3S
 M140 S70 ; set bed temp
 M104 S230 ; set nozzle temp
 M83 ; relative extrusion
