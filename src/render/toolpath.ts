@@ -1,16 +1,13 @@
 import * as THREE from 'three';
 import type { Layer, Move } from '../parser';
 import { EXTRUSION_COLOR, POINT_MARKER_COLOR, TRAVEL_COLOR, featureToColor, layerToColor, speedToColor } from './colors';
+import { DESKTOP_PROFILE, type ScaleProfile } from './scale';
 
 export type ColorMode = 'move-type' | 'speed' | 'layer' | 'feature';
 export type RenderMode = 'lines' | 'tubes';
 
-export const DEFAULT_EXTRUSION_WIDTH = 0.4; // mm, matches a common 0.4mm nozzle
-export const MIN_EXTRUSION_WIDTH = 0.1;
-export const MAX_EXTRUSION_WIDTH = 2.0;
-export const DEFAULT_LAYER_HEIGHT = 0.2; // mm, a common FDM default
-export const MIN_LAYER_HEIGHT = 0.05;
-export const MAX_LAYER_HEIGHT = 1.0;
+export const DEFAULT_EXTRUSION_WIDTH = DESKTOP_PROFILE.beadWidth.default;
+export const DEFAULT_LAYER_HEIGHT = DESKTOP_PROFILE.layerHeight.default;
 const TUBE_RADIAL_SEGMENTS = 6;
 
 export interface LayerCount {
@@ -236,8 +233,13 @@ function buildPointMarker(): THREE.Mesh {
   return marker;
 }
 
-/** Builds toolpath geometry once; layer/point scrubbing after this is just a drawRange/count update. */
-export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
+/**
+ * Builds toolpath geometry once; layer/point scrubbing after this is just a
+ * drawRange/count update. `profile` sets the bead-size clamp range — pass the
+ * large-format profile for 3DCP files or centimeter-scale beads get crushed
+ * to desktop-printer sizes.
+ */
+export function buildToolpath(moves: Move[], layers: Layer[], profile: ScaleProfile = DESKTOP_PROFILE): Toolpath {
   const extrudeMoves: Move[] = [];
   const travelMoves: Move[] = [];
   const extrudeLayerIndex: number[] = [];
@@ -282,8 +284,8 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   extrusionLines.frustumCulled = false;
   travelLines.frustumCulled = false;
 
-  let extrusionWidth = DEFAULT_EXTRUSION_WIDTH;
-  let layerHeight = DEFAULT_LAYER_HEIGHT;
+  let extrusionWidth = profile.beadWidth.default;
+  let layerHeight = profile.layerHeight.default;
   const extrusionTubes = buildTubeMesh(extrudeMoves, extrusionWidth / 2, layerHeight / 2);
   applyTubeColors(extrusionTubes, extrudeMoves, 'move-type', EXTRUSION_COLOR, extrudeCtx);
   extrusionTubes.frustumCulled = false;
@@ -337,12 +339,12 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   }
 
   function setExtrusionWidth(width: number): void {
-    extrusionWidth = Math.max(MIN_EXTRUSION_WIDTH, Math.min(width, MAX_EXTRUSION_WIDTH));
+    extrusionWidth = Math.max(profile.beadWidth.min, Math.min(width, profile.beadWidth.max));
     updateTubeTransforms(extrusionTubes, extrudeMoves, extrusionWidth / 2, layerHeight / 2);
   }
 
   function setLayerHeight(height: number): void {
-    layerHeight = Math.max(MIN_LAYER_HEIGHT, Math.min(height, MAX_LAYER_HEIGHT));
+    layerHeight = Math.max(profile.layerHeight.min, Math.min(height, profile.layerHeight.max));
     updateTubeTransforms(extrusionTubes, extrudeMoves, extrusionWidth / 2, layerHeight / 2);
     pointMarker.scale.setScalar(layerHeight);
   }

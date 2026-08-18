@@ -4,14 +4,17 @@ import {
   buildToolpath,
   MACHINE_PRESETS,
   FIT_TO_MODEL_ID,
+  FILE_DECLARED_MACHINE_ID,
   getMachineProfile,
   findMachineByName,
-  DEFAULT_EXTRUSION_WIDTH,
-  DEFAULT_LAYER_HEIGHT,
+  machineFromMetadata,
+  classifyScale,
+  resolveBeadSize,
   type ColorMode,
   type RenderMode,
   type Toolpath,
   type MachineProfile,
+  type SliderRange,
 } from './render';
 import { initDropZone, renderSidebar, initPlayback, EXAMPLE_FILES, loadExampleFile } from './ui';
 import type { Bounds, ParseResult } from './parser';
@@ -71,6 +74,9 @@ const viewerScene = createViewerScene(canvas);
 let currentToolpath: Toolpath | null = null;
 let currentResult: ParseResult | null = null;
 let currentFileName = '';
+let currentScaleName = '';
+/** Machine profile built from the loaded file's own `;Build volume:` header, if it has one. */
+let fileDeclaredMachine: MachineProfile | null = null;
 
 const playback = initPlayback(
   { playPauseButton, scrubber: layerScrubber, label: layerLabel, modeLayersRadio, modePointsRadio },
@@ -130,12 +136,46 @@ initDropZone({ container: dropZone, input: fileInput }, (file) => {
   });
 });
 
+/** Resolves the machine select's value to a profile: preset, the loaded file's own declared machine, or none. */
+function selectedMachine(): MachineProfile | undefined {
+  if (machineSelect.value === FIT_TO_MODEL_ID) return undefined;
+  if (machineSelect.value === FILE_DECLARED_MACHINE_ID) return fileDeclaredMachine ?? undefined;
+  return getMachineProfile(machineSelect.value);
+}
+
 /** Applies the currently selected machine (or "fit to model") to the scene and refreshes the sidebar warning. */
 function applyBuildVolume(): void {
   if (!currentResult) return;
-  const machine = machineSelect.value === FIT_TO_MODEL_ID ? undefined : getMachineProfile(machineSelect.value);
+  const machine = selectedMachine();
+  renderSidebar(sidebarContent, currentFileName, currentResult, {
+    warning: outOfBoundsWarning(currentResult.bounds, machine),
+    scaleName: currentScaleName,
+  });
   viewerScene.setBuildVolume({ bounds: currentResult.bounds, machine });
-  renderSidebar(sidebarContent, currentFileName, currentResult, outOfBoundsWarning(currentResult.bounds, machine));
+}
+
+/** Reconfigures a range slider to a profile's min/max/step and sets its value + label. */
+function configureSlider(slider: HTMLInputElement, label: HTMLElement, range: SliderRange, value: number): void {
+  slider.min = String(range.min);
+  slider.max = String(range.max);
+  slider.step = String(range.step);
+  slider.value = String(value);
+  label.textContent = `${value.toFixed(2)} mm`;
+}
+
+/** Adds/removes the "machine from file header" option in the machine dropdown for the file just loaded. */
+function updateFileDeclaredMachineOption(): void {
+  const existing = machineSelect.querySelector<HTMLOptionElement>(`option[value="${FILE_DECLARED_MACHINE_ID}"]`);
+  existing?.remove();
+  if (machineSelect.value === '') machineSelect.value = FIT_TO_MODEL_ID;
+  if (!fileDeclaredMachine) return;
+
+  const option = document.createElement('option');
+  option.value = FILE_DECLARED_MACHINE_ID;
+  const { x, y, z } = fileDeclaredMachine.size;
+  option.textContent = `${fileDeclaredMachine.name} (${x}×${y}×${z}mm, from file)`;
+  machineSelect.appendChild(option);
+  machineSelect.value = FILE_DECLARED_MACHINE_ID;
 }
 
 function outOfBoundsWarning(bounds: Bounds, machine: MachineProfile | undefined): string | undefined {
@@ -159,25 +199,29 @@ async function loadFile(file: File): Promise<void> {
     currentToolpath.dispose();
   }
 
-  currentToolpath = buildToolpath(result.moves, result.layers);
+  // Desktop FDM and large-format (3DCP) files get different bead-size slider
+  // ranges and defaults — a 0.4mm nozzle scale is useless for 8mm concrete layers.
+  const profile = classifyScale(result);
+  currentScaleName = profile.name;
+
+  currentToolpath = buildToolpath(result.moves, result.layers, profile);
   viewerScene.scene.add(currentToolpath.object);
   currentToolpath.setShowTravel(toggleTravel.checked);
   currentToolpath.setColorMode(colorModeSelect.value as ColorMode);
   currentToolpath.setRenderMode(renderModeSelect.value as RenderMode);
 
-  // Prefer the file's own declared nozzle width/layer height over whatever
-  // was left on the sliders from a previously loaded, unrelated file.
-  const nozzleWidth = result.metadata.nozzleDiameterMm ?? DEFAULT_EXTRUSION_WIDTH;
-  const layerHeight = result.metadata.layerHeightMm ?? DEFAULT_LAYER_HEIGHT;
-  extrusionWidthSlider.value = String(nozzleWidth);
-  extrusionWidthLabel.textContent = `${nozzleWidth.toFixed(2)} mm`;
-  currentToolpath.setExtrusionWidth(nozzleWidth);
-  layerHeightSlider.value = String(layerHeight);
-  layerHeightLabel.textContent = `${layerHeight.toFixed(2)} mm`;
-  currentToolpath.setLayerHeight(layerHeight);
+  // Prefer the file's own declared bead width/layer height, then sizes
+  // measured from its geometry, over whatever a previous file left behind.
+  const { beadWidthMm, layerHeightMm } = resolveBeadSize(result, profile);
+  configureSlider(extrusionWidthSlider, extrusionWidthLabel, profile.beadWidth, beadWidthMm);
+  currentToolpath.setExtrusionWidth(beadWidthMm);
+  configureSlider(layerHeightSlider, layerHeightLabel, profile.layerHeight, layerHeightMm);
+  currentToolpath.setLayerHeight(layerHeightMm);
 
-  // If the file names its target machine and it matches a known preset, select it.
-  if (result.metadata.machineName) {
+  // A build volume declared in the file's header beats preset matching by name.
+  fileDeclaredMachine = machineFromMetadata(result.metadata) ?? null;
+  updateFileDeclaredMachineOption();
+  if (!fileDeclaredMachine && result.metadata.machineName) {
     const matched = findMachineByName(result.metadata.machineName);
     if (matched) machineSelect.value = matched.id;
   }
