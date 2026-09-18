@@ -1,10 +1,16 @@
 import type { ParseResult } from '../parser';
+import { escapeHtml } from './html';
 
 export interface SidebarOptions {
   /** e.g. "model exceeds the selected machine's build volume" — shown as a standalone banner. */
   warning?: string;
   /** Detected scale-profile name (e.g. "Large format (3DCP)"), shown as its own row. */
   scaleName?: string;
+  /**
+   * Bead width deduced from layer height because the file declares none.
+   * Shown as its own row, labelled so it can't be read as a declared value.
+   */
+  derivedBeadWidthMm?: number;
 }
 
 /**
@@ -17,7 +23,10 @@ export function renderSidebar(
   result: ParseResult,
   options: SidebarOptions = {},
 ): void {
-  const { bounds, layers, metadata } = result;
+  const { layers, metadata } = result;
+  // The deposited part, not the nozzle's whole excursion: travel and a headless
+  // file's assumed (0,0,0) start would otherwise report a bigger print.
+  const bounds = result.extrusionBounds ?? result.bounds;
   const size = {
     x: bounds.max.x - bounds.min.x,
     y: bounds.max.y - bounds.min.y,
@@ -50,6 +59,9 @@ export function renderSidebar(
   }
   if (metadata.nozzleDiameterMm !== undefined) {
     rows.push(row('Bead width', `${metadata.nozzleDiameterMm.toFixed(2)} mm`));
+  } else if (options.derivedBeadWidthMm !== undefined) {
+    // Deduced as 2x layer height, not read from the file — say so.
+    rows.push(row('Bead width', `${fmt(options.derivedBeadWidthMm)} mm (2 × layer height)`));
   }
   if (result.totalExtrusionDistanceMm > 0) {
     rows.push(row('Extruded path', formatLength(result.totalExtrusionDistanceMm)));
@@ -85,10 +97,4 @@ function formatDuration(totalSeconds: number): string {
   if (h || m) parts.push(`${m}m`);
   parts.push(`${s}s`);
   return parts.join(' ');
-}
-
-function escapeHtml(value: string): string {
-  const div = document.createElement('div');
-  div.textContent = value;
-  return div.innerHTML;
 }

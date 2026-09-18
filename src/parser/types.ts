@@ -71,4 +71,11 @@ export interface ParseResult {
   detectedLayerHeightMm?: number;
   /** Total XYZ path length of extruding moves, in mm. For 3DCP-style files whose E axis tracks path distance, this is the deposition length. */
   totalExtrusionDistanceMm: number;
+  /**
+   * Bounds of extruding moves only — the printed part, without travel.
+   * Headless files start from an assumed (0,0,0) and park off to one side, so
+   * `bounds` can be noticeably larger than anything actually deposited.
+   * Undefined when the file deposits nothing.
+   */
+  extrusionBounds?: Bounds;
 }

@@ -5,6 +5,8 @@
  * default). Pure data — no Three.js/DOM here, so it's safe to import from
  * both src/render and src/ui.
  */
+import type { BuildVolume } from '../analysis';
+
 export interface MachineProfile {
   id: string;
   name: string;
@@ -102,4 +104,16 @@ export function findMachineByName(name: string): MachineProfile | undefined {
     if (machine.name.toLowerCase() === normalized) return true;
     return machine.aliases.some((alias) => normalized.includes(alias) || alias.includes(normalized));
   });
+}
+
+/** The machine's volume expressed in G-code coordinates, for the collision checks. */
+export function machineBuildVolume(machine: MachineProfile): BuildVolume {
+  const halfX = machine.size.x / 2;
+  const halfY = machine.size.y / 2;
+  const centered = machine.origin === 'center';
+  return {
+    name: machine.name,
+    min: { x: centered ? -halfX : 0, y: centered ? -halfY : 0, z: 0 },
+    max: { x: centered ? halfX : machine.size.x, y: centered ? halfY : machine.size.y, z: machine.size.z },
+  };
 }

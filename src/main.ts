@@ -1,4 +1,4 @@
-import { parseGCodeFile } from './worker/client';
+import { analyzeToolpathAsync, parseGCodeFile } from './worker/client';
 import {
   createViewerScene,
   buildToolpath,
@@ -10,13 +10,30 @@ import {
   machineFromMetadata,
   classifyScale,
   resolveBeadSize,
+  printBounds,
+  isBeadWidthDerived,
+  machineBuildVolume,
+  createBoundingBoxHelper,
+  createIssueMarkers,
+  createMeasureTool,
+  type Annotation,
   type ColorMode,
   type RenderMode,
   type Toolpath,
   type MachineProfile,
   type SliderRange,
 } from './render';
-import { initDropZone, renderSidebar, initPlayback, EXAMPLE_FILES, loadExampleFile } from './ui';
+import {
+  initDropZone,
+  renderSidebar,
+  initPlayback,
+  renderMeasurePanel,
+  renderAnalysisPanel,
+  EXAMPLE_FILES,
+  loadExampleFile,
+  type AnalysisStatus,
+} from './ui';
+import { extractVertices, packToolpath, type AnalysisReport, type PackedToolpath } from './analysis';
 import type { Bounds, ParseResult } from './parser';
 
 const dropZone = document.getElementById('drop-zone') as HTMLElement;
@@ -42,6 +59,13 @@ const layerHeightLabel = document.getElementById('layer-height-label') as HTMLEl
 const machineSelect = document.getElementById('machine-select') as HTMLSelectElement;
 const toggleScale = document.getElementById('toggle-scale') as HTMLInputElement;
 const exampleFileList = document.getElementById('example-file-list') as HTMLElement;
+const toggleBoundingBox = document.getElementById('toggle-bounding-box') as HTMLInputElement;
+const toggleIssueMarkers = document.getElementById('toggle-issue-markers') as HTMLInputElement;
+const measureToggle = document.getElementById('measure-toggle') as HTMLButtonElement;
+const measureClear = document.getElementById('measure-clear') as HTMLButtonElement;
+const measureReadout = document.getElementById('measure-readout') as HTMLElement;
+const analysisRunButton = document.getElementById('analysis-run') as HTMLButtonElement;
+const analysisResults = document.getElementById('analysis-results') as HTMLElement;
 
 for (const machine of MACHINE_PRESETS) {
   const option = document.createElement('option');
@@ -75,22 +99,44 @@ let currentToolpath: Toolpath | null = null;
 let currentResult: ParseResult | null = null;
 let currentFileName = '';
 let currentScaleName = '';
+/** Bead width deduced from layer height when the file declares none; undefined when declared. */
+let currentDerivedBeadWidthMm: number | undefined;
 /** Machine profile built from the loaded file's own `;Build volume:` header, if it has one. */
 let fileDeclaredMachine: MachineProfile | null = null;
+let packed: PackedToolpath | null = null;
+let boundingBox: Annotation | null = null;
+let issueMarkers: Annotation | null = null;
+let currentReport: AnalysisReport | null = null;
+let pendingAnalysis: { cancel(): void } | null = null;
+
+const measureTool = createMeasureTool(viewerScene.camera, (state) => {
+  renderMeasurePanel(measureReadout, state);
+});
+viewerScene.scene.add(measureTool.object);
+renderMeasurePanel(measureReadout, measureTool.getState());
+renderAnalysisPanel(analysisResults, { state: 'idle' });
 
 const playback = initPlayback(
   { playPauseButton, scrubber: layerScrubber, label: layerLabel, modeLayersRadio, modePointsRadio },
   (mode, index) => {
-    if (!currentToolpath) return;
-    if (mode === 'layers') {
-      currentToolpath.setVisibleThroughLayer(index);
-      currentToolpath.setPointMarkerVisible(false);
-    } else {
-      currentToolpath.setVisibleThroughMove(index);
-      currentToolpath.setPointMarkerVisible(true);
+    if (currentToolpath) {
+      if (mode === 'layers') {
+        currentToolpath.setVisibleThroughLayer(index);
+        currentToolpath.setPointMarkerVisible(false);
+      } else {
+        currentToolpath.setVisibleThroughMove(index);
+        currentToolpath.setPointMarkerVisible(true);
+      }
     }
+    syncMeasureVisibility();
   },
 );
+
+/** Keeps measurement snapping to the part of the toolpath the scrubber reveals. */
+function syncMeasureVisibility(): void {
+  const visibleMoves = currentToolpath?.getVisibleMoveCount() ?? 0;
+  measureTool.setVisibleVertexCount(visibleMoves > 0 ? visibleMoves + 1 : 0);
+}
 
 toggleTravel.addEventListener('change', () => {
   currentToolpath?.setShowTravel(toggleTravel.checked);
@@ -122,10 +168,53 @@ layerHeightSlider.addEventListener('input', () => {
   currentToolpath?.setLayerHeight(height);
 });
 
-machineSelect.addEventListener('change', () => applyBuildVolume());
+machineSelect.addEventListener('change', () => {
+  applyBuildVolume();
+  runAnalysis();
+});
 toggleScale.addEventListener('change', () => viewerScene.setScaleVisible(toggleScale.checked));
+toggleBoundingBox.addEventListener('change', () => refreshBoundingBox());
+toggleIssueMarkers.addEventListener('change', () => refreshIssueMarkers());
 
 loadNewButton.addEventListener('click', () => fileInput.click());
+
+measureToggle.addEventListener('click', () => {
+  const enabled = measureToggle.getAttribute('aria-pressed') !== 'true';
+  measureToggle.setAttribute('aria-pressed', String(enabled));
+  measureToggle.textContent = enabled ? 'On' : 'Off';
+  canvas.classList.toggle('measuring', enabled);
+  measureTool.setEnabled(enabled);
+  if (enabled) syncMeasureVisibility();
+});
+
+measureClear.addEventListener('click', () => measureTool.clear());
+
+// Distinguishes a measurement click from an orbit drag: OrbitControls owns the
+// same pointer events, so only a near-stationary press counts as a pick.
+let pointerDownAt: { x: number; y: number } | null = null;
+const CLICK_SLOP_PX = 4;
+
+canvas.addEventListener('pointerdown', (event) => {
+  pointerDownAt = { x: event.clientX, y: event.clientY };
+});
+
+canvas.addEventListener('pointerup', (event) => {
+  const down = pointerDownAt;
+  pointerDownAt = null;
+  if (!down || !measureTool.getState().enabled) return;
+  if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) return;
+  const rect = canvas.getBoundingClientRect();
+  measureTool.pick(event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height);
+});
+
+analysisRunButton.addEventListener('click', () => runAnalysis());
+
+analysisResults.addEventListener('click', (event) => {
+  const target = (event.target as HTMLElement).closest('.issue-row');
+  if (!(target instanceof HTMLElement)) return;
+  const layer = Number(target.dataset.layer);
+  if (Number.isFinite(layer)) playback.showLayer(layer);
+});
 
 window.addEventListener('resize', () => viewerScene.resize());
 
@@ -148,10 +237,11 @@ function applyBuildVolume(): void {
   if (!currentResult) return;
   const machine = selectedMachine();
   renderSidebar(sidebarContent, currentFileName, currentResult, {
-    warning: outOfBoundsWarning(currentResult.bounds, machine),
+    warning: outOfBoundsWarning(printBounds(currentResult), machine),
     scaleName: currentScaleName,
+    derivedBeadWidthMm: currentDerivedBeadWidthMm,
   });
-  viewerScene.setBuildVolume({ bounds: currentResult.bounds, machine });
+  viewerScene.setBuildVolume({ bounds: printBounds(currentResult), machine });
 }
 
 /** Reconfigures a range slider to a profile's min/max/step and sets its value + label. */
@@ -178,6 +268,87 @@ function updateFileDeclaredMachineOption(): void {
   machineSelect.value = FILE_DECLARED_MACHINE_ID;
 }
 
+/**
+ * Falls back to "Fit to model" when the file says nothing about its machine and
+ * the preset still selected from a previous file cannot hold it. Without this a
+ * metre-scale headless file loads onto whatever desktop plate was last chosen,
+ * and the whole view stays at the wrong scale. A deliberate choice that still
+ * fits the print is left alone.
+ */
+function fitToModelIfPresetTooSmall(result: ParseResult): void {
+  if (result.metadata.machineName || result.metadata.buildVolume) return;
+  const machine = selectedMachine();
+  if (!machine) return;
+  if (!outOfBoundsWarning(printBounds(result), machine)) return;
+  machineSelect.value = FIT_TO_MODEL_ID;
+}
+
+/** Largest model dimension, used to scale in-scene annotations. */
+function sceneSize(): number {
+  if (!currentResult) return 100;
+  const { min, max } = printBounds(currentResult);
+  return Math.max(max.x - min.x, max.y - min.y, max.z - min.z, 1);
+}
+
+/** Bounds for the drawn box: the printed part, available as soon as the file is parsed. */
+function boundingBoxBounds(): Bounds | null {
+  return currentResult ? printBounds(currentResult) : null;
+}
+
+function refreshBoundingBox(): void {
+  if (boundingBox) {
+    viewerScene.scene.remove(boundingBox.object);
+    boundingBox.dispose();
+    boundingBox = null;
+  }
+  const bounds = boundingBoxBounds();
+  if (!toggleBoundingBox.checked || !bounds) return;
+  boundingBox = createBoundingBoxHelper(bounds);
+  viewerScene.scene.add(boundingBox.object);
+}
+
+function refreshIssueMarkers(): void {
+  if (issueMarkers) {
+    viewerScene.scene.remove(issueMarkers.object);
+    issueMarkers.dispose();
+    issueMarkers = null;
+  }
+  if (!toggleIssueMarkers.checked || !currentReport) return;
+  issueMarkers = createIssueMarkers(currentReport.groups, sceneSize());
+  viewerScene.scene.add(issueMarkers.object);
+}
+
+/** Runs the collision/volume checks in a worker; a newer run supersedes an in-flight one. */
+function runAnalysis(): void {
+  if (!packed) return;
+  pendingAnalysis?.cancel();
+  currentReport = null;
+  refreshIssueMarkers();
+  renderAnalysisPanel(analysisResults, { state: 'running' });
+
+  const machine = selectedMachine();
+  const run = analyzeToolpathAsync(packed, {
+    volume: machine ? machineBuildVolume(machine) : undefined,
+  });
+  pendingAnalysis = run;
+
+  run.promise
+    .then((report) => {
+      pendingAnalysis = null;
+      currentReport = report;
+      const status: AnalysisStatus = { state: 'ready', report };
+      renderAnalysisPanel(analysisResults, status);
+      refreshIssueMarkers();
+      refreshBoundingBox();
+    })
+    .catch((err: unknown) => {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      pendingAnalysis = null;
+      const message = err instanceof Error ? err.message : String(err);
+      renderAnalysisPanel(analysisResults, { state: 'error', message: `Analysis failed: ${message}` });
+    });
+}
+
 function outOfBoundsWarning(bounds: Bounds, machine: MachineProfile | undefined): string | undefined {
   if (!machine) return undefined;
   const sizeX = bounds.max.x - bounds.min.x;
@@ -193,6 +364,7 @@ async function loadFile(file: File): Promise<void> {
   const result = await parseGCodeFile(file);
   currentResult = result;
   currentFileName = file.name;
+  currentReport = null;
 
   if (currentToolpath) {
     viewerScene.scene.remove(currentToolpath.object);
@@ -213,6 +385,7 @@ async function loadFile(file: File): Promise<void> {
   // Prefer the file's own declared bead width/layer height, then sizes
   // measured from its geometry, over whatever a previous file left behind.
   const { beadWidthMm, layerHeightMm } = resolveBeadSize(result, profile);
+  currentDerivedBeadWidthMm = isBeadWidthDerived(result) ? beadWidthMm : undefined;
   configureSlider(extrusionWidthSlider, extrusionWidthLabel, profile.beadWidth, beadWidthMm);
   currentToolpath.setExtrusionWidth(beadWidthMm);
   configureSlider(layerHeightSlider, layerHeightLabel, profile.layerHeight, layerHeightMm);
@@ -225,9 +398,17 @@ async function loadFile(file: File): Promise<void> {
     const matched = findMachineByName(result.metadata.machineName);
     if (matched) machineSelect.value = matched.id;
   }
+  fitToModelIfPresetTooSmall(result);
+
+  packed = packToolpath(result.moves, result.layers);
+  measureTool.setVertices(extractVertices(packed));
+  measureTool.setSceneSize(sceneSize());
 
   applyBuildVolume();
   playback.setCounts(result.layers.length, result.moves.length);
+  syncMeasureVisibility();
+  refreshBoundingBox();
+  runAnalysis();
 
   dropZone.hidden = true;
   viewer.hidden = false;

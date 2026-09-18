@@ -21,6 +21,21 @@
         <aside id="sidebar">
           <button id="load-new">Load new .gcode</button>
           <div id="sidebar-content"></div>
+          <section class="panel">
+            <header class="panel-header">
+              <h2>Measure</h2>
+              <button id="measure-toggle" type="button" aria-pressed="false">Off</button>
+            </header>
+            <div id="measure-readout"></div>
+            <button id="measure-clear" type="button" class="panel-action">Clear</button>
+          </section>
+          <section class="panel">
+            <header class="panel-header">
+              <h2>Analysis</h2>
+              <button id="analysis-run" type="button">Re-run</button>
+            </header>
+            <div id="analysis-results"></div>
+          </section>
         </aside>
         <div id="controls">
           <button id="play-pause">Play</button>
@@ -67,6 +82,8 @@
             </select>
           </label>
           <label><input id="toggle-scale" type="checkbox" /> Show scale</label>
+          <label><input id="toggle-bounding-box" type="checkbox" /> Show bounding box</label>
+          <label><input id="toggle-issue-markers" type="checkbox" checked /> Highlight issues</label>
         </div>
       </div>
     </div>

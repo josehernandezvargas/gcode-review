@@ -51,6 +51,7 @@ export function parseGCode(text: string): ParseResult {
     lineCount: lines.length,
     detectedLayerHeightMm: detectLayerHeight(layers),
     totalExtrusionDistanceMm: computeExtrusionDistance(moves),
+    extrusionBounds: computeExtrusionBounds(moves),
   };
 }
 
@@ -261,4 +262,29 @@ function computeBounds(moves: Move[]): Bounds {
   }
 
   return { min, max };
+}
+
+/**
+ * Bounds of the deposited material alone. A headless file has no `G28`/`G92`
+ * to establish a start position, so its first move is drawn from an assumed
+ * (0,0,0) that the machine was never actually at — travel also parks outside
+ * the part. Neither belongs in "how big is this print".
+ */
+function computeExtrusionBounds(moves: Move[]): Bounds | undefined {
+  const min: Vec3 = { x: Infinity, y: Infinity, z: Infinity };
+  const max: Vec3 = { x: -Infinity, y: -Infinity, z: -Infinity };
+  let sawExtrusion = false;
+
+  for (const m of moves) {
+    if (!m.extruding) continue;
+    sawExtrusion = true;
+    min.x = Math.min(min.x, m.x0, m.x1);
+    min.y = Math.min(min.y, m.y0, m.y1);
+    min.z = Math.min(min.z, m.z0, m.z1);
+    max.x = Math.max(max.x, m.x0, m.x1);
+    max.y = Math.max(max.y, m.y0, m.y1);
+    max.z = Math.max(max.z, m.z0, m.z1);
+  }
+
+  return sawExtrusion ? { min, max } : undefined;
 }

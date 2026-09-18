@@ -96,6 +96,25 @@ describe('parseGCode', () => {
     expect(result.metadata.machineName).toBeUndefined();
   });
 
+  it('keeps the assumed (0,0,0) start out of the extrusion bounds of a headless file', () => {
+    const result = parseGCode(loadFixture('e3d_large_scale.gcode'));
+
+    // Nothing homes the machine, so the opening travel is drawn from an assumed
+    // origin the nozzle was never at. It belongs in `bounds`...
+    expect(result.bounds.min.z).toBeCloseTo(0);
+    // ...but not in the printed part, which starts at the first layer's Z.
+    expect(result.extrusionBounds?.min.z).toBeCloseTo(8);
+    expect(result.extrusionBounds?.max.z).toBeCloseTo(24);
+    expect(result.extrusionBounds?.min.x).toBeCloseTo(-550);
+    expect(result.extrusionBounds?.max.x).toBeCloseTo(550);
+    expect(result.extrusionBounds?.min.y).toBeCloseTo(-23.5);
+  });
+
+  it('leaves extrusion bounds undefined when a file deposits nothing', () => {
+    const result = parseGCode('G1 X10 Y10 Z1\nG1 X20 Y20 Z1\n');
+    expect(result.extrusionBounds).toBeUndefined();
+  });
+
   it('parses the custom large-scale header schema (Machine, Material, Build volume, Origin, Bead width)', () => {
     const result = parseGCode(loadFixture('large_scale_with_header.gcode'));
 
