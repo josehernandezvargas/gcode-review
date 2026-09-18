@@ -1,8 +1,12 @@
 import type { ParseMetadata } from './types';
 
-/** Matches both Cura (`;LAYER:n`) and PrusaSlicer/Slic3r (`;LAYER_CHANGE`) markers. */
+/**
+ * Matches Cura (`;LAYER:n`), PrusaSlicer/Slic3r (`;LAYER_CHANGE`), and the
+ * Rhino/GH exporter's `;Layer n` (space-separated) markers. The digit
+ * requirement keeps `;Layer height: 0.2` from counting as a layer change.
+ */
 export function isLayerChangeComment(comment: string): boolean {
-  return /^LAYER:\d+/i.test(comment) || /^LAYER_CHANGE/i.test(comment);
+  return /^LAYER[:\s]\s*\d+/i.test(comment) || /^LAYER_CHANGE/i.test(comment);
 }
 
 // Cura and PrusaSlicer both tag feature/region blocks with a `;TYPE:` comment
@@ -39,6 +43,18 @@ const PRUSA_PRINTER_MODEL_RE = /^printer_model\s*=\s*(.+)/i;
 // Cura/Ultimaker split across two comment lines: ";File created 20260703" then "; at 6:46:58 PM"
 const CURA_FILE_CREATED_RE = /^File created\s+(.+)/i;
 const CURA_CREATED_TIME_RE = /^at\s+(.+)/i;
+// Custom header schema for script-generated (Rhino/GH) files — see docs/exporter-header.md.
+// ";Machine: RISE E3D gantry", ";Material: Concrete", ";Created: 2026-06-05 14:02:11"
+const CUSTOM_MACHINE_RE = /^Machine:\s*(.+)/i;
+// Requires a letter in the value so Ultimaker's numeric ";MATERIAL:1" (a
+// material index, not a name) doesn't show up as "Material: 1".
+const CUSTOM_MATERIAL_RE = /^Material:\s*([^\s].*[A-Za-z].*|[A-Za-z])$/i;
+const CUSTOM_CREATED_RE = /^Created:\s*(.+)/i;
+// ";Bead width: 40" / ";Extrusion width: 40" — large-scale analogue of nozzle diameter.
+const CUSTOM_BEAD_WIDTH_RE = /^(?:Bead|Extrusion) width:\s*([\d.]+)/i;
+// ";Build volume: 1200 x 600 x 600" (mm) and ";Origin: center" / ";Origin: corner"
+const CUSTOM_BUILD_VOLUME_RE = /^Build volume:\s*([\d.]+)\s*[x×]\s*([\d.]+)\s*[x×]\s*([\d.]+)/i;
+const CUSTOM_ORIGIN_RE = /^Origin:\s*(center|corner)/i;
 
 /**
  * Best-effort extraction of header/footer stats from comment lines. Every
@@ -57,8 +73,34 @@ export function collectMetadata(commentLines: string[]): ParseMetadata {
         pendingCreatedDate = undefined;
       } else {
         const fileCreated = line.match(CURA_FILE_CREATED_RE);
-        if (fileCreated) pendingCreatedDate = fileCreated[1].trim();
+        if (fileCreated) {
+          pendingCreatedDate = fileCreated[1].trim();
+        } else {
+          const created = line.match(CUSTOM_CREATED_RE);
+          if (created) metadata.createdAt = created[1].trim();
+        }
       }
+    }
+
+    if (metadata.material === undefined) {
+      const material = line.match(CUSTOM_MATERIAL_RE);
+      if (material) metadata.material = material[1].trim();
+    }
+
+    if (metadata.buildVolume === undefined) {
+      const volume = line.match(CUSTOM_BUILD_VOLUME_RE);
+      if (volume) {
+        metadata.buildVolume = {
+          x: parseFloat(volume[1]),
+          y: parseFloat(volume[2]),
+          z: parseFloat(volume[3]),
+        };
+      }
+    }
+
+    if (metadata.originMode === undefined) {
+      const origin = line.match(CUSTOM_ORIGIN_RE);
+      if (origin) metadata.originMode = origin[1].toLowerCase() as 'center' | 'corner';
     }
 
     if (!metadata.slicer) {
@@ -103,12 +145,10 @@ export function collectMetadata(commentLines: string[]): ParseMetadata {
 
     if (metadata.nozzleDiameterMm === undefined) {
       const prusaNozzle = line.match(PRUSA_NOZZLE_DIAMETER_RE);
-      if (prusaNozzle) {
-        metadata.nozzleDiameterMm = parseFloat(prusaNozzle[1]);
-      } else {
-        const curaNozzle = line.match(CURA_NOZZLE_DIAMETER_RE);
-        if (curaNozzle) metadata.nozzleDiameterMm = parseFloat(curaNozzle[1]);
-      }
+      const curaNozzle = prusaNozzle ? null : line.match(CURA_NOZZLE_DIAMETER_RE);
+      const beadWidth = prusaNozzle || curaNozzle ? null : line.match(CUSTOM_BEAD_WIDTH_RE);
+      const match = prusaNozzle ?? curaNozzle ?? beadWidth;
+      if (match) metadata.nozzleDiameterMm = parseFloat(match[1]);
     }
 
     if (metadata.filamentType === undefined) {
@@ -118,12 +158,10 @@ export function collectMetadata(commentLines: string[]): ParseMetadata {
 
     if (metadata.machineName === undefined) {
       const curaMachine = line.match(CURA_MACHINE_RE);
-      if (curaMachine) {
-        metadata.machineName = curaMachine[1].trim();
-      } else {
-        const prusaModel = line.match(PRUSA_PRINTER_MODEL_RE);
-        if (prusaModel) metadata.machineName = prusaModel[1].trim();
-      }
+      const prusaModel = curaMachine ? null : line.match(PRUSA_PRINTER_MODEL_RE);
+      const customMachine = curaMachine || prusaModel ? null : line.match(CUSTOM_MACHINE_RE);
+      const match = curaMachine ?? prusaModel ?? customMachine;
+      if (match) metadata.machineName = match[1].trim();
     }
   }
 

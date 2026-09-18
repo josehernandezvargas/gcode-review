@@ -21,6 +21,32 @@ export interface MachineProfile {
 /** Sentinel id meaning "no fixed machine — size the plate to the loaded model's own bounds". */
 export const FIT_TO_MODEL_ID = 'fit-to-model';
 
+/** Id given to a machine profile built from the loaded file's own header metadata. */
+export const FILE_DECLARED_MACHINE_ID = 'file-declared';
+
+/**
+ * Builds a machine profile from a file's custom `;Build volume:` /
+ * `;Origin:` / `;Machine:` header (see docs/exporter-header.md). This is how
+ * large-format setups get a real build volume without this repo hardcoding
+ * every gantry/robot — the exporter declares it, the viewer renders it.
+ * Returns undefined unless the file actually declares a build volume.
+ */
+export function machineFromMetadata(metadata: {
+  buildVolume?: { x: number; y: number; z: number };
+  originMode?: 'center' | 'corner';
+  machineName?: string;
+}): MachineProfile | undefined {
+  const volume = metadata.buildVolume;
+  if (!volume || !(volume.x > 0) || !(volume.y > 0) || !(volume.z > 0)) return undefined;
+  return {
+    id: FILE_DECLARED_MACHINE_ID,
+    name: metadata.machineName ?? 'Machine from file header',
+    size: { x: volume.x, y: volume.y, z: volume.z },
+    origin: metadata.originMode ?? 'corner',
+    aliases: [],
+  };
+}
+
 // Publicly documented build volumes from each manufacturer's spec sheet.
 export const MACHINE_PRESETS: MachineProfile[] = [
   {
@@ -62,6 +88,22 @@ export const MACHINE_PRESETS: MachineProfile[] = [
 
 export function getMachineProfile(id: string): MachineProfile | undefined {
   return MACHINE_PRESETS.find((machine) => machine.id === id);
+}
+
+/**
+ * Best-effort match of a slicer-declared machine name (e.g. from
+ * `;TARGET_MACHINE.NAME:` or `; printer_model =`) against the known preset
+ * list. Never fabricates a match — returns undefined for anything not
+ * recognized, rather than guessing.
+ */
+export function findMachineByName(name: string): MachineProfile | undefined {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return undefined;
+
+  return MACHINE_PRESETS.find((machine) => {
+    if (machine.name.toLowerCase() === normalized) return true;
+    return machine.aliases.some((alias) => normalized.includes(alias) || alias.includes(normalized));
+  });
 }
 
 /** The machine's volume expressed in G-code coordinates, for the collision checks. */

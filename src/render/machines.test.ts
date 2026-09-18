@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findMachineByName } from './machines';
+import { FILE_DECLARED_MACHINE_ID, findMachineByName, machineFromMetadata } from './machines';
 
 describe('findMachineByName', () => {
   it('matches an exact preset name', () => {
@@ -24,5 +24,30 @@ describe('findMachineByName', () => {
 
   it('returns undefined for an empty name', () => {
     expect(findMachineByName('')).toBeUndefined();
+  });
+});
+
+describe('machineFromMetadata', () => {
+  it('builds a profile from a header-declared build volume, origin, and name', () => {
+    const machine = machineFromMetadata({
+      buildVolume: { x: 1200, y: 600, z: 600 },
+      originMode: 'center',
+      machineName: 'RISE E3D gantry',
+    });
+    expect(machine?.id).toBe(FILE_DECLARED_MACHINE_ID);
+    expect(machine?.name).toBe('RISE E3D gantry');
+    expect(machine?.size).toEqual({ x: 1200, y: 600, z: 600 });
+    expect(machine?.origin).toBe('center');
+  });
+
+  it('defaults origin to corner and names the profile generically when unspecified', () => {
+    const machine = machineFromMetadata({ buildVolume: { x: 300, y: 300, z: 300 } });
+    expect(machine?.origin).toBe('corner');
+    expect(machine?.name).toBe('Machine from file header');
+  });
+
+  it('returns undefined without a declared build volume — a name alone is not a volume', () => {
+    expect(machineFromMetadata({ machineName: 'Some machine' })).toBeUndefined();
+    expect(machineFromMetadata({ buildVolume: { x: 0, y: 600, z: 600 } })).toBeUndefined();
   });
 });

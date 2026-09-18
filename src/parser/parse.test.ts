@@ -69,6 +69,51 @@ describe('parseGCode', () => {
     expect(result.metadata.slicer).toBe('Python / GH');
     expect(result.metadata.createdAt).toBe('20260703 6:46:58 PM');
     expect(result.metadata.nozzleTempC).toBe(205);
+    // ";MATERIAL:1" is a material index, not a name — must not become "Material: 1".
+    expect(result.metadata.material).toBeUndefined();
+  });
+
+  it('parses large-scale 3DCP output (";Layer n" markers, path-distance E, no header)', () => {
+    const result = parseGCode(loadFixture('e3d_large_scale.gcode'));
+
+    expect(result.layers).toHaveLength(3);
+    expect(result.layers[0].z).toBeCloseTo(8);
+    expect(result.layers[2].z).toBeCloseTo(24);
+    expect(result.detectedLayerHeightMm).toBeCloseTo(8);
+
+    // Origin-centered coordinates: bounds must keep their negative side.
+    expect(result.bounds.min.x).toBeCloseTo(-550);
+    expect(result.bounds.max.x).toBeCloseTo(550);
+
+    // First move reaches the start point with E still 0 -> travel; the rest deposit.
+    expect(result.moves[0].extruding).toBe(false);
+    // E is cumulative XY path distance, so extruded path length matches the E span per layer.
+    expect(result.totalExtrusionDistanceMm).toBeCloseTo(2272 * 3, 0);
+
+    // No header at all: nothing may be fabricated.
+    expect(result.metadata.layerHeightMm).toBeUndefined();
+    expect(result.metadata.printTimeSeconds).toBeUndefined();
+    expect(result.metadata.machineName).toBeUndefined();
+  });
+
+  it('parses the custom large-scale header schema (Machine, Material, Build volume, Origin, Bead width)', () => {
+    const result = parseGCode(loadFixture('large_scale_with_header.gcode'));
+
+    expect(result.layers).toHaveLength(2);
+    expect(result.metadata.slicer).toBe('Rhino_PyWorkshop generic_gcode.py');
+    expect(result.metadata.createdAt).toBe('2026-06-05 14:02:11');
+    expect(result.metadata.machineName).toBe('RISE E3D gantry');
+    expect(result.metadata.material).toBe('Concrete');
+    expect(result.metadata.layerHeightMm).toBeCloseTo(8);
+    expect(result.metadata.nozzleDiameterMm).toBeCloseTo(40);
+    expect(result.metadata.buildVolume).toEqual({ x: 1200, y: 600, z: 600 });
+    expect(result.metadata.originMode).toBe('center');
+  });
+
+  it('does not mistake "Layer height"/"Layer count" header lines for layer changes', () => {
+    const result = parseGCode(loadFixture('large_scale_with_header.gcode'));
+    expect(result.layers).toHaveLength(2);
+    expect(result.layers[0].z).toBeCloseTo(8);
   });
 
   it('falls back to Z-height layer detection when no layer comments are present', () => {

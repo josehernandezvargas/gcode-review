@@ -12,6 +12,14 @@ file targets a specific dialect/edge case called out in SPEC.md §4 and §10:
   `;File created <date>` / `; at <time>` pair.
 - `no_comments.gcode` — no slicer comments at all, to verify graceful
   fallback to Z-height layer detection.
+- `e3d_large_scale.gcode` — mirrors the real large-scale 3DCP (concrete)
+  output of `Rhino_PyWorkshop`'s `generic_gcode.py`: `;Layer n` markers
+  (space, not colon), origin-centered coordinates spanning >1m, 8mm layers,
+  absolute E tracking cumulative path distance, no feedrates, no header.
+- `large_scale_with_header.gcode` — same body plus the custom header schema
+  from `docs/exporter-header.md` (`;Machine:`, `;Material:`, `;Build
+  volume:`, `;Origin:`, `;Bead width:`), which the exporter is encouraged to
+  emit and the parser understands.
 
 Real sample files are now available in `public/gcode/` — actual output from
 the user's own bioprinting export script (also served in the UI as example

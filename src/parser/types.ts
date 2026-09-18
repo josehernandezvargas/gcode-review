@@ -47,6 +47,12 @@ export interface ParseMetadata {
   machineName?: string;
   /** File creation date/time, as declared by the slicer/script (raw string, not reformatted). */
   createdAt?: string;
+  /** Deposited material as declared in a custom `;Material:` header (e.g. "Concrete", "Clay"). */
+  material?: string;
+  /** Machine build volume in mm, from a custom `;Build volume: X x Y x Z` header. */
+  buildVolume?: Vec3;
+  /** Where the machine's XY origin sits, from a custom `;Origin:` header. */
+  originMode?: 'center' | 'corner';
   /** All comment lines encountered, unparsed — kept for display/debugging fallback. */
   raw: string[];
 }
@@ -57,4 +63,12 @@ export interface ParseResult {
   bounds: Bounds;
   metadata: ParseMetadata;
   lineCount: number;
+  /**
+   * Median Z step between consecutive layers, measured from the toolpath
+   * itself. Distinct from metadata.layerHeightMm (which the file declares) —
+   * this is derived geometry, used as a fallback for bead rendering defaults.
+   */
+  detectedLayerHeightMm?: number;
+  /** Total XYZ path length of extruding moves, in mm. For 3DCP-style files whose E axis tracks path distance, this is the deposition length. */
+  totalExtrusionDistanceMm: number;
 }

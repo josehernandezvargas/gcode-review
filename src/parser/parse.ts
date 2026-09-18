@@ -3,7 +3,7 @@ import { createInitialState, type ParserState } from './state';
 import { subdivideArc } from './arcs';
 import { buildLayersFromComments, buildLayersFromZHeight } from './layers';
 import { collectMetadata, isLayerChangeComment, parseFeatureTypeComment } from './metadata';
-import type { Bounds, Move, ParseResult, Vec3 } from './types';
+import type { Bounds, Layer, Move, ParseResult, Vec3 } from './types';
 
 /**
  * Parses raw G-code text into a flat list of line-segment moves plus layer
@@ -49,7 +49,36 @@ export function parseGCode(text: string): ParseResult {
     bounds: computeBounds(moves),
     metadata,
     lineCount: lines.length,
+    detectedLayerHeightMm: detectLayerHeight(layers),
+    totalExtrusionDistanceMm: computeExtrusionDistance(moves),
   };
+}
+
+/**
+ * Median Z step between consecutive layers — measured from the file's own
+ * geometry, never invented. Undefined with fewer than two layers. Large-scale
+ * (3DCP) files routinely omit declared layer height, so this is what keeps
+ * their beads rendered at a sensible size.
+ */
+function detectLayerHeight(layers: Layer[]): number | undefined {
+  const steps: number[] = [];
+  for (let i = 1; i < layers.length; i++) {
+    const step = layers[i].z - layers[i - 1].z;
+    if (step > 1e-6) steps.push(step);
+  }
+  if (steps.length === 0) return undefined;
+  steps.sort((a, b) => a - b);
+  return steps[Math.floor(steps.length / 2)];
+}
+
+/** Total XYZ path length of extruding moves — the deposition length for path-distance E files. */
+function computeExtrusionDistance(moves: Move[]): number {
+  let total = 0;
+  for (const m of moves) {
+    if (!m.extruding) continue;
+    total += Math.hypot(m.x1 - m.x0, m.y1 - m.y0, m.z1 - m.z0);
+  }
+  return total;
 }
 
 function applyCommand(

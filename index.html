@@ -19,7 +19,8 @@
       <div id="viewer" hidden>
         <canvas id="scene-canvas"></canvas>
         <aside id="sidebar">
-          <div id="sidebar-stats"></div>
+          <button id="load-new">Load new .gcode</button>
+          <div id="sidebar-content"></div>
           <section class="panel">
             <header class="panel-header">
               <h2>Measure</h2>
@@ -65,7 +66,7 @@
             </select>
           </label>
           <label>
-            Nozzle width
+            Bead width
             <input id="extrusion-width" type="range" min="0.2" max="2.0" step="0.05" value="0.4" />
             <span id="extrusion-width-label">2 mm</span>
           </label>

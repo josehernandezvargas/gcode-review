@@ -10,23 +10,25 @@ import type { Move } from '../parser';
  * - **Hollow ends.** An open cylinder is a wall with no lid, so you could see
  *   straight down the bore at the start/end of every path.
  * - **Broken corners.** Consecutive segments meet at an angle, leaving a
- *   wedge-shaped gap between two flat-ended cylinders. A hemispherical cap of
- *   the same radius fills that wedge exactly, which is the standard "round
- *   join" — and it also matches how a round nozzle actually lays material
- *   down.
+ *   wedge-shaped gap between two flat-ended cylinders. A cap of the same
+ *   cross-section fills that wedge, which is the standard "round join" — and
+ *   it matches how a nozzle actually lays material down.
  *
- * Naively scaling a capsule per instance would squash the caps (the scale
- * along the segment is its length, but the caps must stay spherical), so the
- * instance matrix carries rotation + translation only and a vertex shader
- * rebuilds the real capsule from a unit template plus a per-instance
- * (radius, half-length) attribute. Normals survive that transform unchanged:
- * the caps get a uniform scale, and the wall's normals are purely radial.
+ * The cross-section is an ellipse, not a circle: a bead is as wide as the
+ * nozzle and as tall as the layer height, which for 3DCP means something like
+ * 30mm x 10mm. So the instance matrix carries an oriented basis (width axis
+ * horizontal, height axis vertical) and the caps are half-ellipsoids.
+ *
+ * Scaling a capsule through the instance matrix would squash the caps along
+ * the segment, so the matrix carries rotation + translation only and a vertex
+ * shader rebuilds the real geometry from a unit template plus a per-instance
+ * (width radius, height radius, half-length) attribute.
  */
 
 export interface TubeMesh {
   mesh: THREE.InstancedMesh;
-  /** Cheap: rewrites one float per instance, no matrix recomposition. */
-  setRadius(radius: number): void;
+  /** Cheap: rewrites two floats per instance, no matrix recomposition. */
+  setBeadSize(widthRadius: number, heightRadius: number): void;
   dispose(): void;
 }
 
@@ -66,20 +68,36 @@ function createTemplateGeometry(quality: TubeQuality): THREE.BufferGeometry {
 }
 
 const TUBE_VERTEX_DECLARATIONS = /* glsl */ `
-attribute vec2 aTube; // x = tube radius, y = half the segment length
+attribute vec3 aTube; // x = width radius, y = height radius, z = half the segment length
 `;
 
-// Radius scales the template radially; the two hemispheres are then pushed
-// apart to straddle the segment. capSign picks which hemisphere a vertex
-// belongs to (wall vertices sit exactly on the ±0.5 boundary and land on the
-// cylinder ends either way).
+/**
+ * Local x is the bead's width axis, z its height axis, y the segment. The
+ * caps are half-ellipsoids with semi-axes (width, width, height): a turn
+ * happens in the horizontal plane, so the cap has to reach a full width
+ * radius past the segment end to meet the next segment's flank, while its
+ * vertical profile stays the bead height.
+ *
+ * capSign picks which cap a vertex belongs to; wall vertices sit exactly on
+ * the +/-0.5 boundary and land on the cylinder ends either way.
+ */
 const TUBE_VERTEX_TRANSFORM = /* glsl */ `
 float capSign = position.y >= 0.0 ? 1.0 : -1.0;
 vec3 transformed = vec3(
   position.x * aTube.x,
-  (position.y - capSign * 0.5) * aTube.x + capSign * aTube.y,
-  position.z * aTube.x
+  (position.y - capSign * 0.5) * aTube.x + capSign * aTube.z,
+  position.z * aTube.y
 );
+`;
+
+// A non-uniform scale needs the inverse transpose on normals, or the lighting
+// reads as a round bead however flat the cross-section actually is.
+const TUBE_NORMAL_TRANSFORM = /* glsl */ `
+vec3 objectNormal = normalize(vec3(
+  normal.x / max(aTube.x, 1e-6),
+  normal.y / max(aTube.x, 1e-6),
+  normal.z / max(aTube.y, 1e-6)
+));
 `;
 
 function createTubeMaterial(): THREE.MeshStandardMaterial {
@@ -91,35 +109,53 @@ function createTubeMaterial(): THREE.MeshStandardMaterial {
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${TUBE_VERTEX_DECLARATIONS}`)
+      .replace('#include <beginnormal_vertex>', TUBE_NORMAL_TRANSFORM)
       .replace('#include <begin_vertex>', TUBE_VERTEX_TRANSFORM);
   };
   // Without a distinct cache key Three.js could hand this material a program
   // compiled for a plain MeshStandardMaterial with the same parameters.
-  material.customProgramCacheKey = () => 'gcode-capsule-tube-v1';
+  material.customProgramCacheKey = () => 'gcode-capsule-tube-v2';
   return material;
 }
 
-const UP_AXIS = new THREE.Vector3(0, 1, 0);
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const WORLD_X = new THREE.Vector3(1, 0, 0);
 
-/** Builds one capsule instance per move. `radius` is the tube radius in mm. */
-export function createTubeMesh(moves: Move[], radius: number): TubeMesh {
+/**
+ * Picks a stable perpendicular basis for a move direction: `right` is
+ * horizontal (perpendicular to both the direction and world-up — the bead's
+ * "width" axis), `up` is whatever's left (the "height" axis, close to
+ * vertical except for near-vertical moves like Z-hops).
+ */
+function computeCrossSectionBasis(direction: THREE.Vector3, right: THREE.Vector3, up: THREE.Vector3): void {
+  right.crossVectors(direction, WORLD_UP);
+  if (right.lengthSq() < 1e-8) right.crossVectors(direction, WORLD_X); // direction ~parallel to world-up
+  right.normalize();
+  up.crossVectors(right, direction).normalize();
+}
+
+/** Builds one capsule instance per move. Radii are half the bead width/height, in mm. */
+export function createTubeMesh(moves: Move[], widthRadius: number, heightRadius: number): TubeMesh {
   const geometry = createTemplateGeometry(qualityFor(moves.length));
   const material = createTubeMaterial();
   const instanceCount = Math.max(1, moves.length);
   const mesh = new THREE.InstancedMesh(geometry, material, instanceCount);
   mesh.count = moves.length;
 
-  // x = radius, y = half-length. Half-length is fixed per move; only the
-  // radius changes when the user drags the extrusion-width slider.
-  const tubeData = new Float32Array(instanceCount * 2);
-  const tubeAttribute = new THREE.InstancedBufferAttribute(tubeData, 2);
+  // Half-length is fixed per move; the radii change when the user drags the
+  // bead-width or layer-height sliders.
+  const tubeData = new Float32Array(instanceCount * 3);
+  const tubeAttribute = new THREE.InstancedBufferAttribute(tubeData, 3);
   tubeAttribute.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('aTube', tubeAttribute);
 
   const start = new THREE.Vector3();
   const end = new THREE.Vector3();
   const direction = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  const up = new THREE.Vector3();
   const midpoint = new THREE.Vector3();
+  const basis = new THREE.Matrix4();
   const quaternion = new THREE.Quaternion();
   const unitScale = new THREE.Vector3(1, 1, 1);
   const matrix = new THREE.Matrix4();
@@ -137,13 +173,18 @@ export function createTubeMesh(moves: Move[], radius: number): TubeMesh {
     if (length < 1e-6) {
       // Zero-length move (a bare retract/prime, for instance) — nothing to draw.
       quaternion.identity();
-      tubeData[i * 2] = 0;
-      tubeData[i * 2 + 1] = 0;
+      tubeData[i * 3] = 0;
+      tubeData[i * 3 + 1] = 0;
+      tubeData[i * 3 + 2] = 0;
     } else {
       direction.divideScalar(length);
-      quaternion.setFromUnitVectors(UP_AXIS, direction);
-      tubeData[i * 2] = radius;
-      tubeData[i * 2 + 1] = length / 2;
+      computeCrossSectionBasis(direction, right, up);
+      // Template's local axes: X is the width axis, Z the height axis, Y the length.
+      basis.makeBasis(right, direction, up);
+      quaternion.setFromRotationMatrix(basis);
+      tubeData[i * 3] = widthRadius;
+      tubeData[i * 3 + 1] = heightRadius;
+      tubeData[i * 3 + 2] = length / 2;
     }
 
     matrix.compose(midpoint, quaternion, unitScale);
@@ -152,10 +193,13 @@ export function createTubeMesh(moves: Move[], radius: number): TubeMesh {
   mesh.instanceMatrix.needsUpdate = true;
   tubeAttribute.needsUpdate = true;
 
-  function setRadius(next: number): void {
+  function setBeadSize(nextWidth: number, nextHeight: number): void {
     for (let i = 0; i < moves.length; i++) {
       // Leave degenerate moves collapsed.
-      if (tubeData[i * 2 + 1] > 0) tubeData[i * 2] = next;
+      if (tubeData[i * 3 + 2] > 0) {
+        tubeData[i * 3] = nextWidth;
+        tubeData[i * 3 + 1] = nextHeight;
+      }
     }
     tubeAttribute.needsUpdate = true;
   }
@@ -165,5 +209,5 @@ export function createTubeMesh(moves: Move[], radius: number): TubeMesh {
     material.dispose();
   }
 
-  return { mesh, setRadius, dispose };
+  return { mesh, setBeadSize, dispose };
 }

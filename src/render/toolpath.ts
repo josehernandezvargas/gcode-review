@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import type { Layer, Move } from '../parser';
-import { EXTRUSION_COLOR, TRAVEL_COLOR, featureToColor, layerToColor, speedToColor } from './colors';
+import { EXTRUSION_COLOR, POINT_MARKER_COLOR, TRAVEL_COLOR, featureToColor, layerToColor, speedToColor } from './colors';
+import { DESKTOP_PROFILE, type ScaleProfile } from './scale';
 import { createTubeMesh, type TubeMesh } from './tubes';
 
 export type ColorMode = 'move-type' | 'speed' | 'layer' | 'feature';
 export type RenderMode = 'lines' | 'tubes';
 
-export const DEFAULT_EXTRUSION_WIDTH = 0.4; // mm, matches a common 0.4mm nozzle
-export const MIN_EXTRUSION_WIDTH = 0.1;
-export const MAX_EXTRUSION_WIDTH = 1.2;
+export const DEFAULT_EXTRUSION_WIDTH = DESKTOP_PROFILE.beadWidth.default;
+export const DEFAULT_LAYER_HEIGHT = DESKTOP_PROFILE.layerHeight.default;
 
 export interface LayerCount {
   extrusion: number;
@@ -27,6 +27,10 @@ export interface Toolpath {
   setRenderMode(mode: RenderMode): void;
   /** Horizontal bead width (nozzle diameter) — the tube's cross-section is wider than it is tall. */
   setExtrusionWidth(width: number): void;
+  /** Vertical bead height (layer height) — the tube's cross-section is wider than it is tall. */
+  setLayerHeight(height: number): void;
+  /** Shows/hides the highlighted sphere marking the last revealed point (Points scrub mode). */
+  setPointMarkerVisible(visible: boolean): void;
   /** Number of leading moves currently revealed by the scrubber. */
   getVisibleMoveCount(): number;
   dispose(): void;
@@ -66,6 +70,10 @@ function resolveMoveColor(
  * Y-up. Map gcode (x, y, z) -> three (x, z, -y): a -90deg rotation about X
  * that keeps the scene right-handed.
  */
+function toSceneVec(x: number, y: number, z: number, out: THREE.Vector3): THREE.Vector3 {
+  return out.set(x, z, -y);
+}
+
 function writePosition(positions: Float32Array, offset: number, x: number, y: number, z: number): void {
   positions[offset] = x;
   positions[offset + 1] = z;
@@ -158,8 +166,13 @@ function buildPointMarker(): THREE.Mesh {
   return marker;
 }
 
-/** Builds toolpath geometry once; layer/point scrubbing after this is just a drawRange/count update. */
-export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
+/**
+ * Builds toolpath geometry once; layer/point scrubbing after this is just a
+ * drawRange/count update. `profile` sets the bead-size clamp range — pass the
+ * large-format profile for 3DCP files or centimeter-scale beads get crushed
+ * to desktop-printer sizes.
+ */
+export function buildToolpath(moves: Move[], layers: Layer[], profile: ScaleProfile = DESKTOP_PROFILE): Toolpath {
   const extrudeMoves: Move[] = [];
   const travelMoves: Move[] = [];
   const extrudeLayerIndex: number[] = [];
@@ -204,8 +217,9 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   extrusionLines.frustumCulled = false;
   travelLines.frustumCulled = false;
 
-  let extrusionWidth = DEFAULT_EXTRUSION_WIDTH;
-  const extrusionTubes: TubeMesh = createTubeMesh(extrudeMoves, extrusionWidth / 2);
+  let extrusionWidth = profile.beadWidth.default;
+  let layerHeight = profile.layerHeight.default;
+  const extrusionTubes: TubeMesh = createTubeMesh(extrudeMoves, extrusionWidth / 2, layerHeight / 2);
   applyTubeColors(extrusionTubes.mesh, extrudeMoves, 'move-type', EXTRUSION_COLOR, extrudeCtx);
   extrusionTubes.mesh.frustumCulled = false;
   extrusionTubes.mesh.visible = false;
@@ -213,7 +227,7 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   const pointMarker = buildPointMarker();
 
   const group = new THREE.Group();
-  group.add(extrusionLines, extrusionTubes.mesh, travelLines);
+  group.add(extrusionLines, extrusionTubes.mesh, travelLines, pointMarker);
 
   const layerCounts = computeLayerCounts(layers, moves);
   const movePrefix = computeMovePrefixCounts(moves);
@@ -261,8 +275,18 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
   }
 
   function setExtrusionWidth(width: number): void {
-    extrusionWidth = Math.max(MIN_EXTRUSION_WIDTH, Math.min(width, MAX_EXTRUSION_WIDTH));
-    extrusionTubes.setRadius(extrusionWidth / 2);
+    extrusionWidth = Math.max(profile.beadWidth.min, Math.min(width, profile.beadWidth.max));
+    extrusionTubes.setBeadSize(extrusionWidth / 2, layerHeight / 2);
+  }
+
+  function setLayerHeight(height: number): void {
+    layerHeight = Math.max(profile.layerHeight.min, Math.min(height, profile.layerHeight.max));
+    extrusionTubes.setBeadSize(extrusionWidth / 2, layerHeight / 2);
+    pointMarker.scale.setScalar(layerHeight);
+  }
+
+  function setPointMarkerVisible(visible: boolean): void {
+    pointMarker.visible = visible;
   }
 
   function dispose(): void {
@@ -271,6 +295,8 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
     extrusionLinesMaterial.dispose();
     travelMaterial.dispose();
     extrusionTubes.dispose();
+    pointMarker.geometry.dispose();
+    (pointMarker.material as THREE.Material).dispose();
   }
 
   setVisibleThroughLayer(layers.length - 1);
@@ -286,6 +312,8 @@ export function buildToolpath(moves: Move[], layers: Layer[]): Toolpath {
     setColorMode,
     setRenderMode,
     setExtrusionWidth,
+    setLayerHeight,
+    setPointMarkerVisible,
     getVisibleMoveCount: () => visibleMoveCount,
     dispose,
   };
