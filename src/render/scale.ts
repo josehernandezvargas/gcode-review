@@ -58,12 +58,27 @@ const LARGE_FORMAT_LAYER_HEIGHT_MM = 2;
 export function classifyScale(result: ParseResult): ScaleProfile {
   const layerHeight = result.metadata.layerHeightMm ?? result.detectedLayerHeightMm ?? 0;
   if (layerHeight >= LARGE_FORMAT_LAYER_HEIGHT_MM) return LARGE_FORMAT_PROFILE;
-  if (maxHorizontalSpan(result.bounds) > LARGE_FORMAT_SPAN_MM) return LARGE_FORMAT_PROFILE;
+  if (maxHorizontalSpan(printBounds(result)) > LARGE_FORMAT_SPAN_MM) return LARGE_FORMAT_PROFILE;
   return DESKTOP_PROFILE;
 }
 
 function maxHorizontalSpan(bounds: Bounds): number {
   return Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y);
+}
+
+/**
+ * The bounds that describe the printed part, which is what the plate, camera
+ * framing and bounding-box overlay should all size themselves to. Extrusion
+ * bounds when the file deposits anything, since travel (and a headless file's
+ * assumed (0,0,0) start) otherwise inflates the box past the real part.
+ */
+export function printBounds(result: ParseResult): Bounds {
+  return result.extrusionBounds ?? result.bounds;
+}
+
+/** True when the file declares no bead width and the rendered one was derived from layer height. */
+export function isBeadWidthDerived(result: ParseResult): boolean {
+  return result.metadata.nozzleDiameterMm === undefined;
 }
 
 /**

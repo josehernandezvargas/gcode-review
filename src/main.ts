@@ -10,6 +10,8 @@ import {
   machineFromMetadata,
   classifyScale,
   resolveBeadSize,
+  printBounds,
+  isBeadWidthDerived,
   machineBuildVolume,
   createBoundingBoxHelper,
   createIssueMarkers,
@@ -97,6 +99,8 @@ let currentToolpath: Toolpath | null = null;
 let currentResult: ParseResult | null = null;
 let currentFileName = '';
 let currentScaleName = '';
+/** Bead width deduced from layer height when the file declares none; undefined when declared. */
+let currentDerivedBeadWidthMm: number | undefined;
 /** Machine profile built from the loaded file's own `;Build volume:` header, if it has one. */
 let fileDeclaredMachine: MachineProfile | null = null;
 let packed: PackedToolpath | null = null;
@@ -233,10 +237,11 @@ function applyBuildVolume(): void {
   if (!currentResult) return;
   const machine = selectedMachine();
   renderSidebar(sidebarContent, currentFileName, currentResult, {
-    warning: outOfBoundsWarning(currentResult.bounds, machine),
+    warning: outOfBoundsWarning(printBounds(currentResult), machine),
     scaleName: currentScaleName,
+    derivedBeadWidthMm: currentDerivedBeadWidthMm,
   });
-  viewerScene.setBuildVolume({ bounds: currentResult.bounds, machine });
+  viewerScene.setBuildVolume({ bounds: printBounds(currentResult), machine });
 }
 
 /** Reconfigures a range slider to a profile's min/max/step and sets its value + label. */
@@ -263,21 +268,31 @@ function updateFileDeclaredMachineOption(): void {
   machineSelect.value = FILE_DECLARED_MACHINE_ID;
 }
 
+/**
+ * Falls back to "Fit to model" when the file says nothing about its machine and
+ * the preset still selected from a previous file cannot hold it. Without this a
+ * metre-scale headless file loads onto whatever desktop plate was last chosen,
+ * and the whole view stays at the wrong scale. A deliberate choice that still
+ * fits the print is left alone.
+ */
+function fitToModelIfPresetTooSmall(result: ParseResult): void {
+  if (result.metadata.machineName || result.metadata.buildVolume) return;
+  const machine = selectedMachine();
+  if (!machine) return;
+  if (!outOfBoundsWarning(printBounds(result), machine)) return;
+  machineSelect.value = FIT_TO_MODEL_ID;
+}
+
 /** Largest model dimension, used to scale in-scene annotations. */
 function sceneSize(): number {
   if (!currentResult) return 100;
-  const { min, max } = currentResult.bounds;
+  const { min, max } = printBounds(currentResult);
   return Math.max(max.x - min.x, max.y - min.y, max.z - min.z, 1);
 }
 
-/**
- * Bounds for the drawn box. Extrusion-only bounds are preferred once the
- * analysis has run — priming lines and parking travel can sit well outside
- * the printed part, which is what the box is supposed to describe.
- */
-function printBounds(): Bounds | null {
-  if (currentReport?.summary.printBounds) return currentReport.summary.printBounds;
-  return currentResult?.bounds ?? null;
+/** Bounds for the drawn box: the printed part, available as soon as the file is parsed. */
+function boundingBoxBounds(): Bounds | null {
+  return currentResult ? printBounds(currentResult) : null;
 }
 
 function refreshBoundingBox(): void {
@@ -286,7 +301,7 @@ function refreshBoundingBox(): void {
     boundingBox.dispose();
     boundingBox = null;
   }
-  const bounds = printBounds();
+  const bounds = boundingBoxBounds();
   if (!toggleBoundingBox.checked || !bounds) return;
   boundingBox = createBoundingBoxHelper(bounds);
   viewerScene.scene.add(boundingBox.object);
@@ -370,6 +385,7 @@ async function loadFile(file: File): Promise<void> {
   // Prefer the file's own declared bead width/layer height, then sizes
   // measured from its geometry, over whatever a previous file left behind.
   const { beadWidthMm, layerHeightMm } = resolveBeadSize(result, profile);
+  currentDerivedBeadWidthMm = isBeadWidthDerived(result) ? beadWidthMm : undefined;
   configureSlider(extrusionWidthSlider, extrusionWidthLabel, profile.beadWidth, beadWidthMm);
   currentToolpath.setExtrusionWidth(beadWidthMm);
   configureSlider(layerHeightSlider, layerHeightLabel, profile.layerHeight, layerHeightMm);
@@ -382,6 +398,7 @@ async function loadFile(file: File): Promise<void> {
     const matched = findMachineByName(result.metadata.machineName);
     if (matched) machineSelect.value = matched.id;
   }
+  fitToModelIfPresetTooSmall(result);
 
   packed = packToolpath(result.moves, result.layers);
   measureTool.setVertices(extractVertices(packed));

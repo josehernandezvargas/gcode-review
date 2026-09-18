@@ -12,7 +12,14 @@ export {
   machineBuildVolume,
 } from './machines';
 export type { MachineProfile } from './machines';
-export { classifyScale, resolveBeadSize, DESKTOP_PROFILE, LARGE_FORMAT_PROFILE } from './scale';
+export {
+  classifyScale,
+  resolveBeadSize,
+  printBounds,
+  isBeadWidthDerived,
+  DESKTOP_PROFILE,
+  LARGE_FORMAT_PROFILE,
+} from './scale';
 export type { ScaleProfile, SliderRange } from './scale';
 export { createBoundingBoxHelper, createIssueMarkers } from './annotations';
 export type { Annotation } from './annotations';

@@ -25,6 +25,8 @@ export interface ViewerScene {
 }
 
 const MAX_SCALE_TICKS = 8;
+/** Upper bound on grid lines per axis, so the cell size scales with the print. */
+const MAX_GRID_DIVISIONS = 40;
 
 /** Picks a "nice" tick spacing (1/2/5 x a power of ten) for a given span, D3-tick-style. */
 function niceInterval(span: number, maxTicks = MAX_SCALE_TICKS): number {
@@ -124,6 +126,8 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
     let sizeZ: number;
     let centerX: number;
     let centerY: number;
+    /** Mid-height of whatever is being framed, in world Y — the camera orbits this. */
+    let centerHeight: number;
 
     if (machine) {
       sizeX = machine.size.x;
@@ -131,12 +135,14 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
       sizeZ = machine.size.z;
       centerX = machine.origin === 'center' ? 0 : sizeX / 2;
       centerY = machine.origin === 'center' ? 0 : sizeY / 2;
+      centerHeight = sizeZ / 2; // the volume stands on the plate
     } else {
       sizeX = Math.max(1, bounds.max.x - bounds.min.x);
       sizeY = Math.max(1, bounds.max.y - bounds.min.y);
       sizeZ = Math.max(1, bounds.max.z - bounds.min.z);
       centerX = (bounds.max.x + bounds.min.x) / 2;
       centerY = (bounds.max.y + bounds.min.y) / 2;
+      centerHeight = (bounds.max.z + bounds.min.z) / 2; // the print may float above z=0
     }
     // Same X/Y -> X/-Z mapping used for the toolpath (see toolpath.ts).
     const centerZ = -centerY;
@@ -156,7 +162,11 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
     scene.add(plate);
 
     const gridSize = Math.max(sizeX, sizeY) * (machine ? 1.05 : 1.2);
-    const divisions = Math.max(2, Math.round(gridSize / 10));
+    // A fixed 10mm cell is right for a desktop plate but turns a metre-scale
+    // 3DCP file into a solid block of lines, so step up to the next "nice"
+    // spacing once 10mm would draw too many.
+    const cellSize = Math.max(10, niceInterval(gridSize, MAX_GRID_DIVISIONS));
+    const divisions = Math.max(2, Math.round(gridSize / cellSize));
     const gridHelper = new THREE.GridHelper(gridSize, divisions, GRID_COLOR_MAJOR, GRID_COLOR_MINOR);
     gridHelper.position.set(centerX, 0, centerZ);
     grid = gridHelper;
@@ -181,9 +191,13 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
     scaleGroup.visible = scaleVisible;
     scene.add(scaleGroup);
 
-    const distance = Math.max(sizeX, sizeY, machine ? sizeZ : 0, 100) * 1.2;
-    camera.position.set(centerX + distance * 0.7, distance * 0.8, centerZ + distance * 0.7);
-    controls.target.set(centerX, 0, centerZ);
+    // Height counts towards framing whether or not a machine is selected — a
+    // headless file can be a 500mm-tall column on a narrow footprint. Orbiting
+    // around mid-height rather than the plate keeps a tall print centred
+    // instead of stacked against the top of the viewport.
+    const distance = Math.max(sizeX, sizeY, sizeZ, 100) * 1.2;
+    camera.position.set(centerX + distance * 0.7, centerHeight + distance * 0.6, centerZ + distance * 0.7);
+    controls.target.set(centerX, centerHeight, centerZ);
     controls.update();
   }
 
