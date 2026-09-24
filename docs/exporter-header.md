@@ -46,6 +46,37 @@ in the recommendation because they cost nothing to emit and make the files
 self-describing for other tools (the viewer independently derives layer count
 and extruded path length from the moves).
 
+## What a headless file gets anyway
+
+The header is a recommendation, not a requirement. A file with nothing but
+`;Layer n` markers and `G1` moves — no `G21`/`G90`/`M82`, no feedrates, no
+comments (`public/gcode/20260605_E3D_gradient_test2.gcode` is exactly this)
+— still renders correctly, because everything below is derived from the
+toolpath itself:
+
+| Property | How it's deduced when undeclared |
+|---|---|
+| Units / positioning / extrusion mode | Assumed mm, absolute, absolute (`G21`/`G90`/`M82` defaults) |
+| Layer height | Median Z step between layers (`detectedLayerHeightMm`) |
+| Bead width | 2 × layer height |
+| Print size | Bounding box of the **extruding** moves (`extrusionBounds`) |
+| Build volume | None assumed — the plate, grid and camera fit the print instead |
+| Scale profile | Large-format when layer height ≥ 2mm or the printed span > 800mm |
+
+Two consequences worth knowing:
+
+- **The bounding box ignores travel.** Nothing homes the machine, so the
+  first move is drawn from an assumed `(0,0,0)` the nozzle was never at.
+  That phantom segment stays out of the reported print size — for the E3D
+  gradient file the box is 1100 × 47 × **504**mm, not 512.
+- **No build volume is invented.** Declaring one (`;Build volume:`) is what
+  turns on the out-of-volume collision check; without it the viewer sizes
+  itself to the print and checks only what it can see.
+
+Declared values always win over deduced ones, and deduced values are
+labelled as such in the sidebar ("8.0 mm (measured)", "16.0 mm (2 × layer
+height)") so they can't be mistaken for something the file said.
+
 ## Improvements beyond the header
 
 1. **Emit feedrates.** No `F` words appear in the E3D output, so print-time

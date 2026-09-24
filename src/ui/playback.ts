@@ -11,6 +11,8 @@ export interface PlaybackElements {
 export interface PlaybackController {
   /** Call once a file is parsed, with its layer count and total move count. */
   setCounts(layerCount: number, moveCount: number): void;
+  /** Stops playback and reveals up to `layerIndex`, switching to layer mode. */
+  showLayer(layerIndex: number): void;
   dispose(): void;
 }
 
@@ -116,9 +118,18 @@ export function initPlayback(
     setIndex(totalFor(mode) > 0 ? totalFor(mode) - 1 : 0);
   }
 
+  function showLayer(layerIndex: number): void {
+    stop();
+    if (mode !== 'layers') {
+      modeLayersRadio.checked = true;
+      switchMode('layers');
+    }
+    setIndex(layerIndex);
+  }
+
   function dispose(): void {
     stop();
   }
 
-  return { setCounts, dispose };
+  return { setCounts, showLayer, dispose };
 }
