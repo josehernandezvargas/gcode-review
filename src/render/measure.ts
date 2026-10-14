@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Vec3 } from '../parser';
+import { MEASURE_AXIS_COLORS, SCENE_THEMES, type SceneTheme, type Theme } from './colors';
 import { disposeObjectTree, makeLabelSprite, setLabelHeight } from './labels';
 
 /**
@@ -41,6 +42,8 @@ export interface MeasureTool {
   setVisibleVertexCount(count: number): void;
   /** Model size in mm, used to scale markers and labels. */
   setSceneSize(size: number): void;
+  /** Recolours markers, span line and label — white on dark, near-black on light. */
+  setTheme(theme: Theme): void;
   /**
    * Picks the toolpath vertex nearest to a canvas-relative pixel position.
    * Returns false when nothing was within the snap radius.
@@ -55,9 +58,9 @@ export interface MeasureTool {
 const SNAP_RADIUS_PX = 22;
 
 const AXIS_COLORS = {
-  x: new THREE.Color(0xff5555),
-  y: new THREE.Color(0x55dd55),
-  z: new THREE.Color(0x5599ff),
+  x: new THREE.Color(MEASURE_AXIS_COLORS.x),
+  y: new THREE.Color(MEASURE_AXIS_COLORS.y),
+  z: new THREE.Color(MEASURE_AXIS_COLORS.z),
 };
 
 function toScene(point: Vec3, out = new THREE.Vector3()): THREE.Vector3 {
@@ -82,12 +85,14 @@ function measure(a: Vec3, b: Vec3): MeasureResult {
 export function createMeasureTool(
   camera: THREE.PerspectiveCamera,
   onChange: (state: MeasureState) => void,
+  initialTheme: Theme = 'dark',
 ): MeasureTool {
+  let palette: SceneTheme = SCENE_THEMES[initialTheme];
   const group = new THREE.Group();
   group.visible = false;
 
   const markerGeometry = new THREE.SphereGeometry(1, 12, 8);
-  const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
+  const markerMaterial = new THREE.MeshBasicMaterial({ color: palette.measure, depthTest: false });
   const markerA = new THREE.Mesh(markerGeometry, markerMaterial);
   const markerB = new THREE.Mesh(markerGeometry, markerMaterial);
   markerA.renderOrder = 6;
@@ -99,10 +104,8 @@ export function createMeasureTool(
   // Straight A->B line.
   const directGeometry = new THREE.BufferGeometry();
   directGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-  const directLine = new THREE.LineSegments(
-    directGeometry,
-    new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false }),
-  );
+  const directMaterial = new THREE.LineBasicMaterial({ color: palette.measure, depthTest: false });
+  const directLine = new THREE.LineSegments(directGeometry, directMaterial);
   directLine.renderOrder = 6;
   directLine.visible = false;
   group.add(directLine);
@@ -199,7 +202,7 @@ export function createMeasureTool(
     axisPosition.needsUpdate = true;
     axisColor.needsUpdate = true;
 
-    label = makeLabelSprite(`${result.distance.toFixed(2)} mm`, '#ffffff');
+    label = makeLabelSprite(`${result.distance.toFixed(2)} mm`, palette.measureLabel);
     setLabelHeight(label, Math.max(sceneSize * 0.045, 1));
     label.position.set((a.x + b.x) / 2, (a.z + b.z) / 2, -(a.y + b.y) / 2);
     group.add(label);
@@ -299,6 +302,12 @@ export function createMeasureTool(
     setSceneSize(size: number): void {
       sceneSize = Math.max(size, 1);
       refresh();
+    },
+    setTheme(theme: Theme): void {
+      palette = SCENE_THEMES[theme];
+      markerMaterial.color.set(palette.measure);
+      directMaterial.color.set(palette.measure);
+      refresh(); // rebuilds the distance label in the new colour
     },
     pick,
     clear,

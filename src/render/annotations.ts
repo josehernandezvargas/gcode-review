@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Bounds } from '../parser';
-import type { Issue, IssueGroup, IssueKind } from '../analysis';
+import type { Issue, IssueGroup } from '../analysis';
+import { ISSUE_COLORS, type SceneTheme } from './colors';
 import { disposeObjectTree, makeLabelSprite, setLabelHeight } from './labels';
 
 /**
@@ -14,13 +15,6 @@ export interface Annotation {
   dispose(): void;
 }
 
-const BOX_COLOR = 0x66d9a0;
-const ISSUE_COLORS: Record<IssueKind, number> = {
-  'out-of-volume': 0xff3b30,
-  'below-plate': 0xff9500,
-  'travel-collision': 0xff00aa,
-};
-
 /** G-code (x, y, z) -> Three.js (x, z, -y), matching toolpath.ts. */
 function toScene(x: number, y: number, z: number, out = new THREE.Vector3()): THREE.Vector3 {
   return out.set(x, z, -y);
@@ -30,7 +24,7 @@ function toScene(x: number, y: number, z: number, out = new THREE.Vector3()): TH
  * Wireframe box around the print's own bounds, with an X/Y/Z dimension label
  * on three edges and a footprint outline dropped onto the plate.
  */
-export function createBoundingBoxHelper(bounds: Bounds): Annotation {
+export function createBoundingBoxHelper(bounds: Bounds, palette: SceneTheme): Annotation {
   const group = new THREE.Group();
   const size = {
     x: Math.max(bounds.max.x - bounds.min.x, 0),
@@ -44,7 +38,7 @@ export function createBoundingBoxHelper(bounds: Bounds): Annotation {
   boxGeometry.dispose();
   const box = new THREE.LineSegments(
     edges,
-    new THREE.LineBasicMaterial({ color: BOX_COLOR, transparent: true, opacity: 0.8 }),
+    new THREE.LineBasicMaterial({ color: palette.boundingBox, transparent: true, opacity: 0.8 }),
   );
   box.position.set(
     (bounds.min.x + bounds.max.x) / 2,
@@ -62,22 +56,22 @@ export function createBoundingBoxHelper(bounds: Bounds): Annotation {
       toScene(bounds.max.x, bounds.max.y, 0),
       toScene(bounds.min.x, bounds.max.y, 0),
     ]),
-    new THREE.LineBasicMaterial({ color: BOX_COLOR, transparent: true, opacity: 0.35 }),
+    new THREE.LineBasicMaterial({ color: palette.boundingBox, transparent: true, opacity: 0.35 }),
   );
   group.add(footprint);
 
   const labelHeight = largest * 0.06;
   const offset = largest * 0.04;
 
-  const xLabel = makeLabelSprite(`X ${size.x.toFixed(1)} mm`, '#8ce8c0');
+  const xLabel = makeLabelSprite(`X ${size.x.toFixed(1)} mm`, palette.boundingBoxLabel);
   xLabel.position.copy(toScene((bounds.min.x + bounds.max.x) / 2, bounds.min.y, bounds.min.z));
   xLabel.position.z += offset;
 
-  const yLabel = makeLabelSprite(`Y ${size.y.toFixed(1)} mm`, '#8ce8c0');
+  const yLabel = makeLabelSprite(`Y ${size.y.toFixed(1)} mm`, palette.boundingBoxLabel);
   yLabel.position.copy(toScene(bounds.max.x, (bounds.min.y + bounds.max.y) / 2, bounds.min.z));
   yLabel.position.x += offset;
 
-  const zLabel = makeLabelSprite(`Z ${size.z.toFixed(1)} mm`, '#8ce8c0');
+  const zLabel = makeLabelSprite(`Z ${size.z.toFixed(1)} mm`, palette.boundingBoxLabel);
   zLabel.position.copy(toScene(bounds.max.x, bounds.min.y, (bounds.min.z + bounds.max.z) / 2));
   zLabel.position.x += offset;
   zLabel.position.z += offset;

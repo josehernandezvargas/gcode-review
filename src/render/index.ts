@@ -25,3 +25,5 @@ export { createBoundingBoxHelper, createIssueMarkers } from './annotations';
 export type { Annotation } from './annotations';
 export { createMeasureTool } from './measure';
 export type { MeasureTool, MeasureState, MeasureResult } from './measure';
+export { SCENE_THEMES } from './colors';
+export type { Theme, SceneTheme } from './colors';

@@ -9,7 +9,7 @@ const LABEL_PADDING_PX = 12;
  * clip, and the resulting aspect ratio is stashed in `userData.aspect` for
  * `setLabelHeight` to keep them undistorted.
  */
-export function makeLabelSprite(text: string, color = '#cfd8dc'): THREE.Sprite {
+export function makeLabelSprite(text: string, color: string): THREE.Sprite {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const font = `${LABEL_FONT_PX}px system-ui, sans-serif`;
