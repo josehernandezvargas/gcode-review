@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { BUILD_PLATE_COLOR, GRID_COLOR_MAJOR, GRID_COLOR_MINOR } from './colors';
+import { SCENE_THEMES, type SceneTheme, type Theme } from './colors';
 import type { Bounds } from '../parser';
 import type { MachineProfile } from './machines';
 import { disposeObjectTree, makeLabelSprite, setLabelHeight } from './labels';
@@ -19,6 +19,8 @@ export interface ViewerScene {
   /** Sizes/positions the build plate + grid, either fit to the model's own bounds or to a fixed machine volume. */
   setBuildVolume(options: BuildVolumeOptions): void;
   setScaleVisible(show: boolean): void;
+  /** Repaints background, plate, grid and scale bar for a theme. Leaves the camera where it is. */
+  setTheme(theme: Theme): void;
   resize(): void;
   render(): void;
   dispose(): void;
@@ -43,7 +45,7 @@ function niceInterval(span: number, maxTicks = MAX_SCALE_TICKS): number {
 }
 
 /** A row of tick marks + "Nmm" labels along the build plate's front edge, as a graphical scale reference. */
-function buildScaleGroup(sizeX: number, minWorldX: number, frontWorldZ: number): THREE.Group {
+function buildScaleGroup(sizeX: number, minWorldX: number, frontWorldZ: number, color: string): THREE.Group {
   const group = new THREE.Group();
   const interval = niceInterval(sizeX);
   const tickHeight = Math.max(sizeX, 1) * 0.02;
@@ -57,11 +59,11 @@ function buildScaleGroup(sizeX: number, minWorldX: number, frontWorldZ: number):
   }
   const lineGeometry = new THREE.BufferGeometry();
   lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePoints, 3));
-  group.add(new THREE.LineSegments(lineGeometry, new THREE.LineBasicMaterial({ color: 0xcfd8dc })));
+  group.add(new THREE.LineSegments(lineGeometry, new THREE.LineBasicMaterial({ color })));
 
   const labelHeight = Math.max(sizeX, 1) * 0.05;
   for (const x of tickPositions) {
-    const sprite = makeLabelSprite(`${Math.round(x)}mm`);
+    const sprite = makeLabelSprite(`${Math.round(x)}mm`, color);
     setLabelHeight(sprite, labelHeight);
     sprite.position.set(minWorldX + x, tickHeight * 2.5, frontWorldZ);
     group.add(sprite);
@@ -70,9 +72,11 @@ function buildScaleGroup(sizeX: number, minWorldX: number, frontWorldZ: number):
   return group;
 }
 
-export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
+export function createViewerScene(canvas: HTMLCanvasElement, initialTheme: Theme = 'dark'): ViewerScene {
+  let palette: SceneTheme = SCENE_THEMES[initialTheme];
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1a1a1a);
+  const background = new THREE.Color(palette.background);
+  scene.background = background;
   scene.add(new THREE.AxesHelper(50));
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
@@ -94,8 +98,41 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
   let volumeBox: THREE.LineSegments | null = null;
   let scaleGroup: THREE.Group | null = null;
   let scaleVisible = false;
+  /** Last options applied, so a theme switch can rebuild the scenery in place. */
+  let currentOptions: BuildVolumeOptions | null = null;
 
   function setBuildVolume(options: BuildVolumeOptions): void {
+    currentOptions = options;
+    const frame = buildScenery(options);
+    // Height counts towards framing whether or not a machine is selected — a
+    // headless file can be a 500mm-tall column on a narrow footprint. Orbiting
+    // around mid-height rather than the plate keeps a tall print centred
+    // instead of stacked against the top of the viewport.
+    const distance = Math.max(frame.sizeX, frame.sizeY, frame.sizeZ, 100) * 1.2;
+    camera.position.set(
+      frame.centerX + distance * 0.7,
+      frame.centerHeight + distance * 0.6,
+      frame.centerZ + distance * 0.7,
+    );
+    controls.target.set(frame.centerX, frame.centerHeight, frame.centerZ);
+    controls.update();
+  }
+
+  function setTheme(theme: Theme): void {
+    palette = SCENE_THEMES[theme];
+    background.set(palette.background);
+    if (currentOptions) buildScenery(currentOptions);
+  }
+
+  /** (Re)builds plate, grid, volume box and scale bar in the current palette; returns what to frame. */
+  function buildScenery(options: BuildVolumeOptions): {
+    sizeX: number;
+    sizeY: number;
+    sizeZ: number;
+    centerX: number;
+    centerZ: number;
+    centerHeight: number;
+  } {
     const { bounds, machine } = options;
 
     if (buildPlate) {
@@ -150,10 +187,10 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
     const plate = new THREE.Mesh(
       new THREE.PlaneGeometry(sizeX, sizeY),
       new THREE.MeshBasicMaterial({
-        color: BUILD_PLATE_COLOR,
+        color: palette.buildPlate,
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.3,
+        opacity: palette.buildPlateOpacity,
       }),
     );
     plate.rotation.x = -Math.PI / 2;
@@ -167,7 +204,7 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
     // spacing once 10mm would draw too many.
     const cellSize = Math.max(10, niceInterval(gridSize, MAX_GRID_DIVISIONS));
     const divisions = Math.max(2, Math.round(gridSize / cellSize));
-    const gridHelper = new THREE.GridHelper(gridSize, divisions, GRID_COLOR_MAJOR, GRID_COLOR_MINOR);
+    const gridHelper = new THREE.GridHelper(gridSize, divisions, palette.gridMajor, palette.gridMinor);
     gridHelper.position.set(centerX, 0, centerZ);
     grid = gridHelper;
     scene.add(gridHelper);
@@ -180,25 +217,18 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
       boxGeometry.dispose();
       const box = new THREE.LineSegments(
         edges,
-        new THREE.LineBasicMaterial({ color: 0x6688aa, transparent: true, opacity: 0.6 }),
+        new THREE.LineBasicMaterial({ color: palette.volumeBox, transparent: true, opacity: 0.6 }),
       );
       box.position.set(centerX, sizeZ / 2, centerZ);
       volumeBox = box;
       scene.add(box);
     }
 
-    scaleGroup = buildScaleGroup(sizeX, centerX - sizeX / 2, centerZ + sizeY / 2);
+    scaleGroup = buildScaleGroup(sizeX, centerX - sizeX / 2, centerZ + sizeY / 2, palette.scaleBar);
     scaleGroup.visible = scaleVisible;
     scene.add(scaleGroup);
 
-    // Height counts towards framing whether or not a machine is selected — a
-    // headless file can be a 500mm-tall column on a narrow footprint. Orbiting
-    // around mid-height rather than the plate keeps a tall print centred
-    // instead of stacked against the top of the viewport.
-    const distance = Math.max(sizeX, sizeY, sizeZ, 100) * 1.2;
-    camera.position.set(centerX + distance * 0.7, centerHeight + distance * 0.6, centerZ + distance * 0.7);
-    controls.target.set(centerX, centerHeight, centerZ);
-    controls.update();
+    return { sizeX, sizeY, sizeZ, centerX, centerZ, centerHeight };
   }
 
   function setScaleVisible(show: boolean): void {
@@ -237,5 +267,5 @@ export function createViewerScene(canvas: HTMLCanvasElement): ViewerScene {
 
   resize();
 
-  return { scene, camera, renderer, controls, setBuildVolume, setScaleVisible, resize, render, dispose };
+  return { scene, camera, renderer, controls, setBuildVolume, setScaleVisible, setTheme, resize, render, dispose };
 }

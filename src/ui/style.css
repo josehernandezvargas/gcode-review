@@ -1,3 +1,80 @@
+/* ============================================================================
+ *  COLOUR SETTINGS — page UI
+ * ============================================================================
+ *
+ * Every colour on the page (start screen, sidebar, controls, buttons, panels)
+ * is a custom property defined in the two blocks below. Nothing further down
+ * this file uses a literal colour — change a token here and it applies
+ * everywhere.
+ *
+ *   :root                      → dark theme (the default)
+ *   :root[data-theme='light']  → light theme, overriding the same tokens
+ *
+ * The 3D canvas is painted by Three.js, not CSS, so its colours (background,
+ * grid, build plate, toolpath, overlays) live in src/render/colors.ts.
+ * See docs/theming.md for the map of both.
+ */
+
+:root {
+  color-scheme: dark; /* native selects, sliders and scrollbars follow the theme */
+
+  --bg: #1a1a1a;
+  --surface: #222222;
+  --surface-sunken: #1e1e1e;
+  --surface-raised: #2b2b2b;
+  --surface-hover: #353535;
+  --border: #333333;
+  --border-strong: #4a4a4a;
+
+  --text: #e6e6e6;
+  --text-muted: #9a9a9a;
+  --text-subtle: #7a7a7a;
+
+  --accent: #3399ff;
+  --accent-hover: #4da6ff;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(51, 153, 255, 0.1);
+
+  --success: #66d9a0;
+  --danger: #ff8c8c;
+  --warning: #ffb000;
+  --warning-soft: rgba(255, 176, 0, 0.12);
+  --warning-border: rgba(255, 176, 0, 0.45);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f3f4f6;
+  --surface: #ffffff;
+  --surface-sunken: #f8f9fa;
+  --surface-raised: #ffffff;
+  --surface-hover: #eef1f4;
+  --border: #dde1e6;
+  --border-strong: #b9c0c8;
+
+  --text: #1d2125;
+  --text-muted: #5c6670;
+  --text-subtle: #7d868f;
+
+  --accent: #0b6bcb;
+  --accent-hover: #0a5fb4;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(11, 107, 203, 0.08);
+
+  --success: #0f7a52;
+  --danger: #c62828;
+  --warning: #9a6200;
+  --warning-soft: rgba(255, 176, 0, 0.14);
+  --warning-border: rgba(196, 128, 0, 0.45);
+
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+
+/* ---- Base ------------------------------------------------------------------ */
+
 * {
   box-sizing: border-box;
 }
@@ -10,62 +87,256 @@ body,
 }
 
 body {
-  font-family: system-ui, sans-serif;
-  background: #1a1a1a;
-  color: #e0e0e0;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  accent-color: var(--accent); /* range sliders, checkboxes, radios */
+}
+
+[hidden] {
+  display: none !important;
+}
+
+button,
+select {
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--surface-hover);
+}
+
+button:focus-visible,
+select:focus-visible,
+#drop-zone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Line icons share one stroke style and inherit the text colour. */
+.brand-mark,
+.theme-toggle svg,
+.drop-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---- Theme toggle ------------------------------------------------------------ */
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.theme-toggle svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+/* Show what a click switches *to*: a sun in dark mode, a moon in light mode. */
+:root[data-theme='dark'] .theme-toggle .icon-moon,
+:root[data-theme='light'] .theme-toggle .icon-sun {
+  display: none;
+}
+
+/* ---- Start screen ------------------------------------------------------------ */
+
+#start-screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.brand-mark {
+  width: 1.4rem;
+  height: 1.4rem;
+  color: var(--accent);
+}
+
+.start-main {
+  flex: 1;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2rem;
+}
+
+.start-intro h1 {
+  margin: 0 0 0.4rem;
+  font-size: 1.6rem;
+  font-weight: 650;
+}
+
+.start-intro p {
+  margin: 0;
+  color: var(--text-muted);
 }
 
 #drop-zone {
-  height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  border: 2px dashed #555;
-  margin: 1rem;
-  border-radius: 8px;
-  cursor: pointer;
+  gap: 0.35rem;
+  padding: 3rem 2rem;
+  border: 2px dashed var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
   text-align: center;
-  padding: 2rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
 }
 
+#drop-zone:hover,
 #drop-zone.drag-over {
-  border-color: #3399ff;
-  background: rgba(51, 153, 255, 0.08);
-}
-
-#drop-zone[hidden] {
-  display: none;
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 #drop-zone input[type='file'] {
   display: none;
 }
 
-#example-files {
-  margin-top: 1.5rem;
+#drop-zone p {
+  margin: 0;
 }
 
-#example-files p {
-  margin: 0 0 0.5rem;
-  font-size: 0.85rem;
-  color: #999;
+.drop-icon {
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-bottom: 0.5rem;
+  color: var(--accent);
+}
+
+.drop-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.drop-subtitle {
+  color: var(--text-muted);
+}
+
+.drop-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.drop-formats {
+  margin-top: 0.6rem !important;
+  font-size: 0.8rem;
+  color: var(--text-subtle);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+#example-files h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
 }
 
 #example-file-list {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.5rem;
+  display: grid;
+  /* Wide enough that the mono filename under each label fits on one line. */
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 0.75rem;
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-#example-file-list button {
-  cursor: pointer;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.85rem;
+.example-card {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.85rem 1rem;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transition:
+    border-color 0.15s,
+    transform 0.15s;
 }
+
+.example-card:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+  transform: translateY(-1px);
+}
+
+.example-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.example-file {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+@media (max-width: 560px) {
+  .start-main {
+    padding: 2rem 1rem;
+  }
+
+  #drop-zone {
+    padding: 2.25rem 1.25rem;
+  }
+}
+
+/* ---- Viewer layout ----------------------------------------------------------- */
 
 #viewer {
   height: 100%;
@@ -78,10 +349,6 @@ body {
     'settings settings';
 }
 
-#viewer[hidden] {
-  display: none;
-}
-
 #scene-canvas {
   grid-area: canvas;
   width: 100%;
@@ -89,10 +356,15 @@ body {
   display: block;
 }
 
+#scene-canvas.measuring {
+  cursor: crosshair;
+}
+
 #sidebar {
   grid-area: sidebar;
   padding: 1rem;
-  background: #222;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
   overflow-y: auto;
 }
 
@@ -100,17 +372,16 @@ body {
   width: 100%;
   margin-bottom: 1rem;
   padding: 0.5rem;
-  cursor: pointer;
 }
 
 .sidebar-warning {
-  margin: 0 0 1rem;
-  padding: 0.5rem 0.75rem;
-  background: rgba(255, 176, 0, 0.15);
-  border: 1px solid rgba(255, 176, 0, 0.4);
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.6rem;
   border-radius: 4px;
-  font-size: 0.85rem;
-  color: #ffb000;
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-border);
+  color: var(--warning);
+  font-size: 0.8rem;
 }
 
 .stats .stat {
@@ -120,12 +391,13 @@ body {
 .stats dt {
   font-size: 0.75rem;
   text-transform: uppercase;
-  color: #999;
+  color: var(--text-muted);
 }
 
 .stats dd {
   margin: 0;
   font-size: 1rem;
+  overflow-wrap: anywhere; /* long file names wrap instead of running off the sidebar */
 }
 
 .stats.compact .stat {
@@ -137,19 +409,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.sidebar-warning {
-  margin: 0 0 0.75rem;
-  padding: 0.5rem 0.6rem;
-  border-radius: 4px;
-  background: rgba(255, 149, 0, 0.15);
-  border: 1px solid rgba(255, 149, 0, 0.5);
-  font-size: 0.8rem;
-}
+/* ---- Sidebar panels (measure, analysis) -------------------------------------- */
 
 .panel {
   margin-top: 1.25rem;
   padding-top: 0.75rem;
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--border);
 }
 
 .panel-header {
@@ -165,27 +430,19 @@ body {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #999;
+  color: var(--text-muted);
 }
 
 .panel button {
-  background: #2f2f2f;
-  color: #e0e0e0;
-  border: 1px solid #444;
-  border-radius: 4px;
   padding: 0.2rem 0.5rem;
   font-size: 0.75rem;
-  cursor: pointer;
-}
-
-.panel button:hover {
-  background: #3a3a3a;
+  border-radius: 4px;
 }
 
 .panel button[aria-pressed='true'] {
-  background: #3399ff;
-  border-color: #3399ff;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .panel-action {
@@ -195,14 +452,14 @@ body {
 .panel-hint {
   margin: 0;
   font-size: 0.75rem;
-  color: #999;
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
 .panel-ok {
   margin: 0.25rem 0;
   font-size: 0.8rem;
-  color: #66d9a0;
+  color: var(--success);
 }
 
 .issue-group {
@@ -212,13 +469,13 @@ body {
 .issue-group h3 {
   margin: 0 0 0.35rem;
   font-size: 0.78rem;
-  color: #e0e0e0;
+  color: var(--text);
   font-weight: 600;
 }
 
 .issue-count {
   float: right;
-  color: #ff8c8c;
+  color: var(--danger);
   font-variant-numeric: tabular-nums;
 }
 
@@ -232,33 +489,30 @@ body {
   margin-bottom: 0.2rem;
 }
 
-.issue-row {
+.panel .issue-row {
   width: 100%;
   text-align: left;
   font-size: 0.72rem;
   line-height: 1.3;
-  color: #cfd8dc;
-  background: #262626;
-  border: 1px solid #333;
+  color: var(--text);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0.3rem 0.4rem;
-  cursor: pointer;
 }
 
-.issue-row:hover {
-  background: #303030;
-  border-color: #555;
+.panel .issue-row:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
 }
 
 .issue-more {
   font-size: 0.72rem;
-  color: #888;
+  color: var(--text-subtle);
   padding: 0.2rem 0.4rem;
 }
 
-#scene-canvas.measuring {
-  cursor: crosshair;
-}
+/* ---- Bottom controls and settings -------------------------------------------- */
 
 #controls {
   grid-area: controls;
@@ -266,12 +520,18 @@ body {
   align-items: center;
   gap: 1rem;
   padding: 0.75rem 1rem;
-  background: #222;
-  border-top: 1px solid #333;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
 }
 
 #layer-scrubber {
   flex: 1;
+}
+
+#layer-label {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 #controls label {
@@ -291,13 +551,9 @@ body {
   flex-wrap: wrap;
   gap: 0.75rem 1.5rem;
   padding: 0.75rem 1rem;
-  background: #1e1e1e;
-  border-top: 1px solid #333;
+  background: var(--surface-sunken);
+  border-top: 1px solid var(--border);
   font-size: 0.85rem;
-}
-
-#settings-panel[hidden] {
-  display: none;
 }
 
 #settings-panel label {

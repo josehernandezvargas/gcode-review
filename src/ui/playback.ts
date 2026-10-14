@@ -17,6 +17,13 @@ export interface PlaybackController {
 }
 
 const FRAME_INTERVAL_MS = 120;
+/**
+ * Upper bound on Play's frame count in Points mode. Stepping one move per
+ * frame is right for layers but would take ~7 hours across a 200k-move
+ * file, so Points playback strides to finish in at most this many frames
+ * (~1 minute at FRAME_INTERVAL_MS). Small files still step one point at a time.
+ */
+const MAX_POINT_PLAYBACK_FRAMES = 500;
 
 /**
  * Drives the scrubber + play/pause button in one of two modes: revealing
@@ -31,7 +38,8 @@ export function initPlayback(
 
   let layerCount = 0;
   let moveCount = 0;
-  let mode: ScrubMode = 'layers';
+  // The markup decides the default, so the radio and the scrubber can't disagree.
+  let mode: ScrubMode = modePointsRadio.checked ? 'points' : 'layers';
   let currentIndex = 0;
   let playing = false;
   let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -68,6 +76,11 @@ export function initPlayback(
     }
   }
 
+  function playbackStride(): number {
+    if (mode === 'layers') return 1;
+    return Math.max(1, Math.ceil(moveCount / MAX_POINT_PLAYBACK_FRAMES));
+  }
+
   function play(): void {
     const total = totalFor(mode);
     if (total === 0) return;
@@ -79,7 +92,7 @@ export function initPlayback(
         stop();
         return;
       }
-      setIndex(currentIndex + 1);
+      setIndex(currentIndex + playbackStride());
     }, FRAME_INTERVAL_MS);
   }
 

@@ -16,6 +16,7 @@ import {
   createBoundingBoxHelper,
   createIssueMarkers,
   createMeasureTool,
+  SCENE_THEMES,
   type Annotation,
   type ColorMode,
   type RenderMode,
@@ -31,11 +32,14 @@ import {
   renderAnalysisPanel,
   EXAMPLE_FILES,
   loadExampleFile,
+  initThemeToggle,
+  resolveInitialTheme,
   type AnalysisStatus,
 } from './ui';
 import { extractVertices, packToolpath, type AnalysisReport, type PackedToolpath } from './analysis';
 import type { Bounds, ParseResult } from './parser';
 
+const startScreen = document.getElementById('start-screen') as HTMLElement;
 const dropZone = document.getElementById('drop-zone') as HTMLElement;
 const fileInput = document.getElementById('file-input') as HTMLInputElement;
 const viewer = document.getElementById('viewer') as HTMLElement;
@@ -78,11 +82,16 @@ for (const example of EXAMPLE_FILES) {
   const item = document.createElement('li');
   const button = document.createElement('button');
   button.type = 'button';
-  button.textContent = example.label;
-  button.addEventListener('click', (event) => {
-    // Stop this from bubbling to #drop-zone's own click handler, which would
-    // also pop open the native file picker on top of loading the example.
-    event.stopPropagation();
+  button.className = 'example-card';
+  button.title = example.fileName;
+  const label = document.createElement('span');
+  label.className = 'example-label';
+  label.textContent = example.label;
+  const fileName = document.createElement('span');
+  fileName.className = 'example-file';
+  fileName.textContent = example.fileName;
+  button.append(label, fileName);
+  button.addEventListener('click', () => {
     loadExampleFile(example.fileName)
       .then((file) => loadFile(file))
       .catch((err) => {
@@ -94,7 +103,9 @@ for (const example of EXAMPLE_FILES) {
   exampleFileList.appendChild(item);
 }
 
-const viewerScene = createViewerScene(canvas);
+const initialTheme = resolveInitialTheme();
+const viewerScene = createViewerScene(canvas, initialTheme);
+let sceneTheme = SCENE_THEMES[initialTheme];
 let currentToolpath: Toolpath | null = null;
 let currentResult: ParseResult | null = null;
 let currentFileName = '';
@@ -109,12 +120,24 @@ let issueMarkers: Annotation | null = null;
 let currentReport: AnalysisReport | null = null;
 let pendingAnalysis: { cancel(): void } | null = null;
 
-const measureTool = createMeasureTool(viewerScene.camera, (state) => {
-  renderMeasurePanel(measureReadout, state);
-});
+const measureTool = createMeasureTool(
+  viewerScene.camera,
+  (state) => renderMeasurePanel(measureReadout, state),
+  initialTheme,
+);
 viewerScene.scene.add(measureTool.object);
 renderMeasurePanel(measureReadout, measureTool.getState());
 renderAnalysisPanel(analysisResults, { state: 'idle' });
+
+// Light/dark switch: the page repaints through CSS tokens; the 3D scene and
+// its overlays have to be told. Every `.theme-toggle` button (start screen
+// header and viewer controls) drives the same state.
+initThemeToggle(document.querySelectorAll<HTMLButtonElement>('.theme-toggle'), (theme) => {
+  sceneTheme = SCENE_THEMES[theme];
+  viewerScene.setTheme(theme);
+  measureTool.setTheme(theme);
+  refreshBoundingBox();
+});
 
 const playback = initPlayback(
   { playPauseButton, scrubber: layerScrubber, label: layerLabel, modeLayersRadio, modePointsRadio },
@@ -218,7 +241,9 @@ analysisResults.addEventListener('click', (event) => {
 
 window.addEventListener('resize', () => viewerScene.resize());
 
-initDropZone({ container: dropZone, input: fileInput }, (file) => {
+// The whole page accepts a dropped file, so a near-miss beside the box still
+// loads it rather than the browser navigating away to display the file.
+initDropZone({ container: dropZone, input: fileInput, dropTarget: document.body }, (file) => {
   loadFile(file).catch((err) => {
     console.error('Failed to parse G-code file', err);
     alert(`Could not read this file as G-code: ${err instanceof Error ? err.message : err}`);
@@ -303,7 +328,7 @@ function refreshBoundingBox(): void {
   }
   const bounds = boundingBoxBounds();
   if (!toggleBoundingBox.checked || !bounds) return;
-  boundingBox = createBoundingBoxHelper(bounds);
+  boundingBox = createBoundingBoxHelper(bounds, sceneTheme);
   viewerScene.scene.add(boundingBox.object);
 }
 
@@ -410,7 +435,7 @@ async function loadFile(file: File): Promise<void> {
   refreshBoundingBox();
   runAnalysis();
 
-  dropZone.hidden = true;
+  startScreen.hidden = true;
   viewer.hidden = false;
   viewerScene.resize();
 }

@@ -9,3 +9,5 @@ export type { ExampleFile } from './examples';
 export { renderMeasurePanel } from './measure';
 export { renderAnalysisPanel } from './analysis';
 export type { AnalysisStatus } from './analysis';
+export { initThemeToggle, resolveInitialTheme } from './theme';
+export type { ThemeController } from './theme';
